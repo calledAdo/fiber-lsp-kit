@@ -11,12 +11,20 @@ We use two FNN nodes on one machine:
 | **#1** | LSP (already funded from RouteKit testing) | `127.0.0.1:8227` | `8228` | `~/my-fnn` |
 | **#2** | client wallet (fresh) | `127.0.0.1:8237` | `8238` | `~/my-fnn-client` |
 
-Node #2's directory + config (new ports, `announced_node_name: lsp-client-node`) are **already prepared**
-by the scaffold. Node #2's config inherits the RUSD `udt_whitelist` with `auto_accept_amount`, so it
-**auto-accepts** RUSD channels — which is exactly what demonstrates acceptor-funds-0.
+Node #2's config inherits the RUSD `udt_whitelist` with `auto_accept_amount`, so it **auto-accepts** RUSD
+channels — which is exactly what demonstrates acceptor-funds-0.
 
-The steps below need things only you have (the node key password, faucet funds), so they're yours to run;
-`!`-prefix them in this session so the output lands here and I can reconcile.
+> **Status 2026-07-01 — node #2 is already up.** I generated its throwaway CKB key, booted it, and captured
+> its identity live. RPC field shapes were reconciled against it (notably `node_info` returns **`pubkey`**,
+> not `node_id`; `new_invoice`'s `payment_hash` is nested under `invoice.data`) and the code + 20 tests are
+> green. **Node #2 identity:**
+> - `CLIENT_PUBKEY` = `0344f85475b59dd4427fd7e37e581c9d1d99d74d7d69aa95bd8a538d4ec4e87283`
+> - dial address = `/ip4/127.0.0.1/tcp/8238/p2p/0344f85475b59dd4427fd7e37e581c9d1d99d74d7d69aa95bd8a538d4ec4e87283`
+> - **CKB funding address (fund this from the faucet):**
+>   `ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqg8zpnvy5390xfxy95ptjuu938zlgrejjs0ccrkg`
+>
+> So the only things left that are genuinely yours: **(A) start node #1** with your
+> `FIBER_SECRET_KEY_PASSWORD`, and **(B) fund node #2** at the address above. Then `bash scripts/part-c-raw-open.sh`.
 
 ---
 
@@ -39,53 +47,51 @@ curl -s -X POST http://127.0.0.1:8227 -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"node_info","params":[]}' | python3 -m json.tool
 ```
 
-Note `node_id` (→ `LSP_PUBKEY`). The LSP's dialable address is `/ip4/127.0.0.1/tcp/8228/p2p/<node_id>`.
+Note the `pubkey` field (→ `LSP_PUBKEY`). The LSP's dialable address is `/ip4/127.0.0.1/tcp/8228/p2p/<pubkey>`.
+(Live nodes return the identity as `pubkey`, confirmed against node #2.)
 
-## Part B — bring up node #2 (client) and fund it
+## Part B — fund node #2 (client)
 
-1. Start node #2 (first boot generates its own fiber identity + CKB key, encrypted with the password you
-   pass). Use a **new terminal** and keep it running:
+Node #2 is **already running** (I booted it — see the Status box above). Its CKB key was generated as a
+fresh throwaway; on first boot FNN migrated it to the encrypted format. All that remains:
 
-   ```bash
-   cd ~/my-fnn-client
-   FIBER_SECRET_KEY_PASSWORD='<pick-a-password>' ./fnn -c config.yml -d ~/my-fnn-client
-   ```
+Fund node #2 from the **[Pudge faucet](https://faucet.nervos.org/)** (a small amount of CKB is enough — the
+client only pays the CKB fee) at:
 
-   If FNN reports it needs a CKB key file (`encrypt_decrypt_file NotFound`), create one the same way you
-   did for node #1 (`ckb-cli account new` → `account export --lock-arg <arg> --extended-privkey-path
-   ~/my-fnn-client/ckb/key`), then restart with the password.
-
-2. Get node #2's CKB funding address and fund it from the **[Pudge faucet](https://faucet.nervos.org/)**
-   (a small amount of CKB is enough — the client only pays the CKB fee):
-
-   ```bash
-   cd ~/my-fnn-client && ./ckb-cli account list   # shows the address to fund
-   ```
-
-3. Node #2's `node_id`: `curl 127.0.0.1:8237 … node_info` → this is your `CLIENT_PUBKEY`.
+```
+ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqg8zpnvy5390xfxy95ptjuu938zlgrejjs0ccrkg
+```
 
 > The LSP (node #1) needs **RUSD** to fund the RUSD channel. It should still hold the RUSD from RouteKit
 > testing; if not, acquire testnet RUSD to node #1's address first.
 
 ## Part C — the raw feasibility check (RPC, no server yet)
 
-From node #1 (LSP), connect to node #2 and open a **RUSD** channel funded entirely by the LSP:
+Once node #1 is up and node #2 is funded, just run the driver script — it connects the LSP to the client,
+opens the LSP-funded RUSD channel, and polls node #2 until `ChannelReady`, printing the balances:
+
+```bash
+cd ~/fiber-lsp-kit && bash scripts/part-c-raw-open.sh
+```
+
+<details><summary>What it runs (raw RPC, node #2 identity already baked in)</summary>
 
 ```bash
 # 1. LSP connects to the client
 curl -s -X POST http://127.0.0.1:8227 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,
-  "method":"connect_peer","params":[{"address":"/ip4/127.0.0.1/tcp/8238/p2p/<CLIENT_PUBKEY>"}]}'
+  "method":"connect_peer","params":[{"address":"/ip4/127.0.0.1/tcp/8238/p2p/0344f854...87283","save":true}]}'
 
 # 2. LSP opens a RUSD channel toward the client (funding_amount is RUSD; hex-encoded).
-#    RUSD script = the udt_whitelist entry in config.yml.
 curl -s -X POST http://127.0.0.1:8227 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,
   "method":"open_channel","params":[{
-    "pubkey":"<CLIENT_PUBKEY>",
+    "pubkey":"0344f85475b59dd4427fd7e37e581c9d1d99d74d7d69aa95bd8a538d4ec4e87283",
     "funding_amount":"0x5f5e100",
     "funding_udt_type_script":{
       "code_hash":"0x1142755a044bf2ee358cba9f2da187ce928c91cd4dc8692ded0337efa677d21a",
       "hash_type":"type",
       "args":"0x878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b"}}]}'
+```
+</details>
 ```
 
 Then, **on node #2**, watch the channel appear and confirm the asymmetry — client `local_balance` = 0,

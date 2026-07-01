@@ -6,8 +6,9 @@
  *   Channel: open_channel { pubkey, funding_amount(hex), funding_udt_type_script?, public?, ... }
  *              -> { temporary_channel_id }
  *            list_channels { pubkey?, include_closed?, only_pending? } -> { channels: [...] }
- *   Invoice: new_invoice { amount(hex), currency, udt_type_script?, expiry(hex)? } -> { invoice_address, .. }
- *   Info:    node_info -> { node_id/public_key, addresses, ... }
+ *   Invoice: new_invoice { amount(hex), currency, udt_type_script?, expiry(hex)? }
+ *              -> { invoice_address, invoice: { data: { payment_hash, .. } } }   (verified live, v0.9.0-rc5)
+ *   Info:    node_info -> { pubkey, addresses, ... }   (field is `pubkey`, verified live)
  *
  * FNN encodes u64/u128 as 0x-hex strings; we convert amounts via num.ts at this boundary only.
  */
@@ -62,7 +63,14 @@ export class FiberChannelRpcClient {
     return json.result as T;
   }
 
-  nodeInfo(): Promise<{ node_id?: string; public_key?: string; addresses?: string[] }> {
+  nodeInfo(): Promise<{
+    /** FNN returns the node identity as `pubkey` (verified live, v0.9.0-rc5). */
+    pubkey?: string;
+    /** Older/aliased fields — kept for forward-compat, but live nodes send `pubkey`. */
+    node_id?: string;
+    public_key?: string;
+    addresses?: string[];
+  }> {
     return this.call("node_info", []);
   }
 
@@ -95,7 +103,11 @@ export class FiberChannelRpcClient {
     description?: string;
     udtTypeScript?: UdtTypeScript;
     expirySeconds?: number;
-  }): Promise<{ invoice_address: string; payment_hash?: string }> {
+    /**
+     * `invoice_address` is the payable BOLT-style string the client settles.
+     * `payment_hash` lives under `invoice.data` on live nodes (v0.9.0-rc5), not top-level.
+     */
+  }): Promise<{ invoice_address: string; invoice?: { data?: { payment_hash?: string } } }> {
     const params: Record<string, unknown> = {
       amount: toHex(args.amount),
       currency: args.currency ?? "Fibt",

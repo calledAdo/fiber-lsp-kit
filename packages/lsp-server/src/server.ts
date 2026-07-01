@@ -53,7 +53,7 @@ async function main() {
   let addresses = process.env.LSP_ADDR ? [process.env.LSP_ADDR] : [];
   try {
     const info = await rpc.nodeInfo();
-    lspPubkey ||= info.node_id ?? info.public_key ?? "";
+    lspPubkey ||= info.pubkey ?? info.node_id ?? info.public_key ?? "";
     if (addresses.length === 0 && info.addresses) addresses = info.addresses;
   } catch {
     console.warn(`[lsp] could not reach FNN at ${FIBER_RPC_URL}; identity will be from env only`);
