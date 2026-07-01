@@ -8,7 +8,8 @@
 #
 # Node #2 identity (already live, captured 2026-07-01):
 CLIENT_PUBKEY="0344f85475b59dd4427fd7e37e581c9d1d99d74d7d69aa95bd8a538d4ec4e87283"
-CLIENT_ADDR="/ip4/127.0.0.1/tcp/8238/p2p/${CLIENT_PUBKEY}"
+# Local dial: multiaddr WITHOUT /p2p/<peer-id> (the /p2p id is base58, not the hex pubkey).
+CLIENT_ADDR="/ip4/127.0.0.1/tcp/8238"
 
 LSP="http://127.0.0.1:8227"
 CLIENT="http://127.0.0.1:8237"

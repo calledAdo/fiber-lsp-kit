@@ -26,10 +26,14 @@ export function makeMockRpc(opts: MockRpcOpts = {}): { fetchImpl: FetchLike; cal
     let result: unknown;
     switch (method) {
       case "node_info":
-        result = { node_id: opts.lspPubkey ?? "0xLSPPUBKEY", addresses: ["/ip4/127.0.0.1/tcp/8228"] };
+        result = { pubkey: opts.lspPubkey ?? "0xLSPPUBKEY", addresses: ["/ip4/127.0.0.1/tcp/8228"] };
         break;
       case "new_invoice":
-        result = { invoice_address: `fibt_fee_${p0.amount}`, payment_hash: "0xhash" };
+        result = { invoice_address: `fibt_fee_${p0.amount}`, invoice: { data: { payment_hash: "0xhash" } } };
+        break;
+      case "list_peers":
+        // Not yet connected → provision will issue a connect_peer.
+        result = { peers: [] };
         break;
       case "connect_peer":
         result = null;

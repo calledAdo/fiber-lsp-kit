@@ -22,6 +22,12 @@ export interface RpcClientConfig {
   fetchImpl?: FetchLike;
 }
 
+/** A peer as returned by list_peers (verified live: each entry has `pubkey`, and `address` once known). */
+export interface RawPeer {
+  pubkey: string;
+  address?: string;
+}
+
 /** A channel as returned by list_channels (fields the LSP cares about). */
 export interface RawChannel {
   channel_id: string;
@@ -74,6 +80,11 @@ export class FiberChannelRpcClient {
     return this.call("node_info", []);
   }
 
+  /**
+   * Connect to a peer by multiaddr. NOTE (verified live): the `/p2p/<id>` suffix, if present, must be a
+   * base58 libp2p peer id — NOT the hex node pubkey. For a local/unannounced peer, dial the plain
+   * transport multiaddr with no `/p2p/` suffix, e.g. `/ip4/127.0.0.1/tcp/8238`.
+   */
   connectPeer(address: string, save = true): Promise<null> {
     return this.call("connect_peer", [{ address, save }]);
   }
@@ -94,6 +105,12 @@ export class FiberChannelRpcClient {
       pubkey ? { pubkey } : {},
     ]);
     return r.channels ?? [];
+  }
+
+  /** Currently-connected peers. Used to avoid a redundant connect_peer (which can crash the acceptor). */
+  async listPeers(): Promise<RawPeer[]> {
+    const r = await this.call<{ peers?: RawPeer[] }>("list_peers", []);
+    return r.peers ?? [];
   }
 
   /** Create an invoice (used for the prepaid fee). `amount` in base unit; UDT optional. */

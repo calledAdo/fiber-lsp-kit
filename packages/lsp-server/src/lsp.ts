@@ -25,7 +25,6 @@ import {
   canonicalAssetId,
   udtAsset,
   CKB,
-  asBig,
   isChannelReady,
 } from "@fiberlsp/protocol";
 import { MemoryOrderStore, type OrderStore } from "./orderStore.js";
@@ -181,9 +180,21 @@ export class Lsp {
 
     const req = order.request;
     try {
+      // Connect only if not already peered: a redundant connect_peer can crash the acceptor's gossip
+      // actor (ActorAlreadyRegistered), verified live against FNN v0.9.
       if (req.target_address) {
-        await this.cfg.rpc.connectPeer(req.target_address);
+        const peers = await this.cfg.rpc.listPeers();
+        if (!peers.some((p) => p.pubkey === req.target_pubkey)) {
+          await this.cfg.rpc.connectPeer(req.target_address);
+        }
       }
+
+      // Snapshot channels to this peer BEFORE opening, so we can identify the one we just opened
+      // (matching by exact balance is wrong — CKB channels reserve occupied cell capacity, so the
+      // LSP's local_balance is less than the requested funding amount).
+      const before = new Set(
+        (await this.cfg.rpc.listChannels(req.target_pubkey)).map((c) => c.channel_id),
+      );
       await this.cfg.rpc.openChannel({
         pubkey: req.target_pubkey,
         fundingAmount: req.lsp_balance,
@@ -191,7 +202,7 @@ export class Lsp {
         public: req.public ?? true,
       });
 
-      const ready = await this.pollForReadyChannel(req);
+      const ready = await this.pollForReadyChannel(req, before);
       if (!ready) {
         return this.update(id, {
           state: "failed",
@@ -211,19 +222,23 @@ export class Lsp {
   }
 
   /**
-   * Find the channel we just provisioned: same peer, same asset, ChannelReady, and LSP-side balance
-   * covering the requested inbound (the LSP's local_balance is what the client can receive).
+   * Find the channel we just provisioned: a channel to this peer, in the requested asset, that reached
+   * ChannelReady and did not exist before we opened it (`before` = channel_ids present pre-open). We
+   * identify by novelty + peer + asset rather than exact balance, because a CKB channel's occupied cell
+   * reserve makes the LSP's local_balance smaller than the requested funding amount.
    */
-  private async pollForReadyChannel(req: CreateOrderRequest): Promise<RawChannel | null> {
+  private async pollForReadyChannel(
+    req: CreateOrderRequest,
+    before: Set<string>,
+  ): Promise<RawChannel | null> {
     const wantId = canonicalAssetId(req.asset);
-    const wantInbound = asBig(req.lsp_balance);
     for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
       const channels = await this.cfg.rpc.listChannels(req.target_pubkey);
       const match = channels.find(
         (c) =>
+          !before.has(c.channel_id) &&
           canonicalAssetId(channelAsset(c)) === wantId &&
-          isChannelReady(c) &&
-          asBig(c.local_balance) >= wantInbound,
+          isChannelReady(c),
       );
       if (match) return match;
       if (i < this.cfg.readyPollAttempts - 1) await this.cfg.sleep(this.cfg.readyPollIntervalMs);

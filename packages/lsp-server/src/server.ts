@@ -66,6 +66,9 @@ async function main() {
     supportedAssets: defaultOfferings(),
     feeModes: ["prepaid", "from_capacity"],
     operator: "fiber-lsp-kit reference server",
+    // On-chain funding confirmation can take a while on testnet; allow tuning the ready-poll window.
+    ...(process.env.READY_POLL_ATTEMPTS ? { readyPollAttempts: Number(process.env.READY_POLL_ATTEMPTS) } : {}),
+    ...(process.env.READY_POLL_INTERVAL_MS ? { readyPollIntervalMs: Number(process.env.READY_POLL_INTERVAL_MS) } : {}),
   });
   const handle = createApi(lsp);
 
