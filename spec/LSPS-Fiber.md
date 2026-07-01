@@ -103,6 +103,15 @@ proportional term applies only to CKB channels (same unit); UDT channels are cha
 `from_capacity` is CKB-only because the post-open fee payment must come from the client's outbound *on the
 new channel*, which is only CKB when the channel is CKB. A UDT channel cannot pay a CKB fee from itself.
 
+> **The fee bootstrap (confirmed on testnet).** An LSP-opened channel where the client contributes 0 leaves
+> the client with **0 outbound**, so it cannot pay a fee *over Fiber* from that channel — not a `from_capacity`
+> in-channel payment, and not even a `prepaid` Fiber `fee_invoice`. For the genuinely-zero-capital client the
+> `prepaid` fee must therefore be an **out-of-band CKB payment**: on-chain to the LSP's address, or routed
+> through a pre-existing CKB channel that already gives the client outbound. `from_capacity` only applies when
+> the client *actively* dual-funds CKB (giving itself outbound); it does not apply to the auto-accept-0 open.
+> An implementation MAY expose the `prepaid` `fee_invoice` as an on-chain address or a Fiber invoice depending
+> on whether the client already has outbound. See `LIVE_RESULTS.md`.
+
 ## 5. Order lifecycle
 
 ```
