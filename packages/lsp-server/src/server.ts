@@ -39,7 +39,10 @@ function defaultOfferings(): AssetOffering[] {
     },
     {
       asset: RUSD,
-      min_capacity: "1000000", // depends on RUSD decimals; tune per token
+      // min_capacity must be >= the CLIENT node's UDT auto_accept_amount floor, or its FNN node will
+      // silently refuse to auto-accept the channel (verified live: is_udt_type_auto_accept requires
+      // funding_amount >= auto_accept_amount). Testnet RUSD auto_accept_amount is 10 RUSD (1e9, 8 decimals).
+      min_capacity: "1000000000", // 10 RUSD
       max_capacity: "100000000000",
       fee_schedule: { base_fee: (10n * CKB_SHANNONS).toString(), proportional_bps: 0 }, // flat 10 CKB
     },

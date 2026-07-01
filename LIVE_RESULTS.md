@@ -46,8 +46,33 @@ section should present the fee as an **out-of-band CKB payment** for the zero-ca
 in-Fiber invoice. Tracked as a spec follow-up. (It does not change the flagship value: the client receives
 per-asset inbound it could not otherwise get.)
 
-## Pending: the RUSD hero
+## The RUSD hero — DONE ✅
 
-Node #1 holds **0 RUSD** (testnet RUSD only via the interactive JoyID → stablepp faucet, then transfer to
-node #1's funding address `ckt1qzda…3jzcn`). Once funded, the exact same path opens a **RUSD** channel with
-the client at zero RUSD — the flagship per-asset-inbound demo. See `LIVE_CONFIRM.md`.
+Node #1 was funded with 20 RUSD (via JoyID → stablepp faucet → transfer to its funding lock). Then, on the
+same two live nodes:
+
+3. **Raw feasibility (RPC), RUSD.** LSP `open_channel` funding **10 RUSD** → client at zero contribution →
+   `ChannelReady`:
+   - node #2 (client): RUSD, `local_balance = 0`, `remote_balance = 10 RUSD` (**per-asset inbound, client held 0 RUSD**)
+   - node #1 (LSP): RUSD, `local_balance = 10 RUSD`, `remote_balance = 0`
+   - outpoint `0x14247d2bd46f7b17e2429727df8c93bbf5190059c71f4caf5ffd46cf20d1f1af:0`
+
+4. **Full stack (server + client SDK), RUSD.** `buyInboundLiquidity({ asset: RUSD, 10 RUSD, prepaid })`
+   → REST → `Lsp.provision` → live UDT `open_channel` → poll → **`channel_active`**:
+   - order `544e03e3-3fa3-429a-a668-578ac0d58270`, fee `1000000000` shannons (10 CKB)
+   - outpoint `0x12f252a46f6504870efe284f9f1b540c1192ded02fb8085f5b322b55b3f0b8f7:0`
+
+Repro: `scripts/part-e-rusd.mjs` against the running server.
+
+### Critical UDT auto-accept fact (was a bug in our offering)
+
+`is_udt_type_auto_accept` (FNN `contracts.rs`) returns `funding_amount >= auto_accept_amount` — the UDT
+`auto_accept_amount` is a **minimum floor**, not a ceiling. A funding **below** it is silently refused
+(WARN-level; the channel stalls in `NegotiatingFunding` and never reaches the acceptor). Testnet RUSD's
+`auto_accept_amount` is **10 RUSD**, so a 5 RUSD open never accepted; 10 RUSD did. The server's RUSD
+`min_capacity` was raised to 10 RUSD accordingly — an LSP must not quote a UDT capacity below the client's
+auto-accept floor. (CKB uses the same floor semantics via `open_channel_auto_accept_min_ckb_funding_amount`.)
+
+> Operational note: UDT funding makes a burst of CKB-RPC calls (fetch UDT cells + cell deps), so it is more
+> sensitive to public-endpoint (`testnet.ckb.dev`) flakiness than a CKB channel; a stalled attempt is cleared
+> with `abandon_channel` and retried. `abandon_channel { channel_id }` cleanly drops a pre-funding channel.
