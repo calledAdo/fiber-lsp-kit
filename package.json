@@ -1,0 +1,31 @@
+{
+  "name": "fiber-lsp-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Liquidity-service (LSP) protocol, reference server, and client SDK for Fiber Network — buy inbound liquidity, per asset.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b packages/protocol packages/lsp-server packages/client",
+    "typecheck": "npm run build -- --dry 2>/dev/null; tsc -b packages/protocol packages/lsp-server packages/client",
+    "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
+    "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",
+    "server": "npm run build && npm -w @fiberlsp/server run start"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "fiber",
+    "ckb",
+    "nervos",
+    "lsp",
+    "liquidity",
+    "payment-channels",
+    "lightning"
+  ]
+}
