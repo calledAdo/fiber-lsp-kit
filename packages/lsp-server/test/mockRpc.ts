@@ -9,6 +9,8 @@ export interface MockRpcOpts {
   lspPubkey?: string;
   /** If false, list_channels keeps returning a non-ready channel (to test the timeout path). */
   makeReady?: boolean;
+  /** Status returned by get_invoice (defaults to "Paid"). */
+  invoiceStatus?: string;
 }
 
 export function makeMockRpc(opts: MockRpcOpts = {}): { fetchImpl: FetchLike; calls: string[] } {
@@ -30,6 +32,9 @@ export function makeMockRpc(opts: MockRpcOpts = {}): { fetchImpl: FetchLike; cal
         break;
       case "new_invoice":
         result = { invoice_address: `fibt_fee_${p0.amount}`, invoice: { data: { payment_hash: "0xhash" } } };
+        break;
+      case "get_invoice":
+        result = { status: opts.invoiceStatus ?? "Paid", invoice_address: "fibt_fee" };
         break;
       case "list_peers":
         // Not yet connected → provision will issue a connect_peer.

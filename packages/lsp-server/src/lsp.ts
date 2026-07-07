@@ -1,7 +1,7 @@
 /**
  * Lsp — the reference LSP engine. Turns an order into a provisioned inbound channel.
  *
- * Flow (see spec/LSPS-Fiber.md):
+ * Flow (see docs/LSPS-Fiber.md):
  *   createOrder ──prepaid──▶ awaiting_payment ──settleFee──▶ opening ──▶ channel_active
  *               └─from_capacity──▶ opening (channel opened immediately) ──▶ channel_active
  *
@@ -9,9 +9,11 @@
  * transport for offline tests — the same real code path runs in the demo against a live FNN node.
  */
 import {
+  type AssetLiquidity,
   type AssetOffering,
   type CreateOrderRequest,
   type FeeMode,
+  type LiquiditySnapshot,
   type LspInfo,
   type Order,
   type OrderPayment,
@@ -20,6 +22,7 @@ import {
   FiberChannelRpcClient,
   quoteFee,
   validateOrder,
+  asBig,
   assetEquals,
   assetUdtScript,
   canonicalAssetId,
@@ -62,6 +65,19 @@ export interface LspConfig {
    * queries the node's invoice status so a client can't get a channel without paying.
    */
   verifyFeePaid?: (order: Order) => Promise<boolean>;
+  /**
+   * Delivers an order webhook. Defaults to a POST via global fetch; injectable so tests don't hit the
+   * network. Delivery is best-effort — a failure here never affects provisioning.
+   */
+  deliverWebhook?: (url: string, order: Order) => Promise<void>;
+}
+
+async function defaultDeliverWebhook(url: string, order: Order): Promise<void> {
+  await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "order.updated", order }),
+  });
 }
 
 export class Lsp {
@@ -111,6 +127,43 @@ export class Lsp {
     return this.cfg.store.get(id);
   }
 
+  /**
+   * A live snapshot of the LSP's capacity, grouped by asset — the data behind a liquidity dashboard.
+   * `outbound` (summed local balances) is what the LSP can send / has already provisioned to peers;
+   * `inbound` (summed remote balances) is what it can receive. Read straight from `list_channels`.
+   */
+  async liquidity(): Promise<LiquiditySnapshot> {
+    const channels = await this.cfg.rpc.listChannels();
+    const groups = new Map<string, AssetLiquidity>();
+    for (const c of channels) {
+      const asset = channelAsset(c);
+      const key = canonicalAssetId(asset);
+      if (key === null) continue;
+      let g = groups.get(key);
+      if (!g) {
+        // Prefer the offering's asset descriptor so the dashboard shows the symbol (e.g. "RUSD").
+        const offered = this.cfg.supportedAssets.find((o) => assetEquals(o.asset, asset));
+        g = {
+          asset: offered?.asset ?? asset,
+          channel_count: 0,
+          ready_channel_count: 0,
+          outbound: "0",
+          inbound: "0",
+        };
+        groups.set(key, g);
+      }
+      g.channel_count += 1;
+      if (isChannelReady(c)) g.ready_channel_count += 1;
+      g.outbound = (asBig(g.outbound) + asBig(c.local_balance)).toString();
+      g.inbound = (asBig(g.inbound) + asBig(c.remote_balance)).toString();
+    }
+    return {
+      lsp_pubkey: this.cfg.lspPubkey,
+      generated_at: this.cfg.now(),
+      assets: [...groups.values()],
+    };
+  }
+
   private offeringFor(req: CreateOrderRequest): AssetOffering {
     const offering = this.cfg.supportedAssets.find((o) => assetEquals(o.asset, req.asset));
     if (!offering) throw new OrderError("unsupported_asset", "asset not offered by this LSP");
@@ -135,7 +188,12 @@ export class Lsp {
         description: `LSP inbound liquidity order ${order_id}`,
         expirySeconds: this.cfg.orderExpirySeconds,
       });
-      payment = { mode: "prepaid", fee_invoice: inv.invoice_address, amount: fee.total_fee };
+      payment = {
+        mode: "prepaid",
+        fee_invoice: inv.invoice_address,
+        amount: fee.total_fee,
+        fee_payment_hash: inv.invoice?.data?.payment_hash,
+      };
       state = "awaiting_payment";
     } else {
       payment = { mode: "from_capacity", amount: fee.total_fee, lsp_pubkey: this.cfg.lspPubkey };
@@ -253,9 +311,21 @@ export class Lsp {
   }
 
   private update(id: string, patch: Partial<Order>): Order {
-    const next = { ...this.requireOrder(id), ...patch };
+    const prev = this.requireOrder(id);
+    const next = { ...prev, ...patch };
     this.cfg.store.put(next);
+    if (patch.state && patch.state !== prev.state) this.fireWebhook(next);
     return next;
+  }
+
+  /** Best-effort webhook on a state transition; never throws into the state machine. */
+  private fireWebhook(order: Order): void {
+    const url = order.request.webhook_url;
+    if (!url) return;
+    const deliver = this.cfg.deliverWebhook ?? defaultDeliverWebhook;
+    void deliver(url, order).catch((e) => {
+      console.warn(`[lsp] webhook to ${url} failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
   }
 }
 
@@ -263,4 +333,24 @@ export class Lsp {
 export function channelAsset(c: RawChannel): { kind: "CKB" } | ReturnType<typeof udtAsset> {
   const s = c.funding_udt_type_script as UdtTypeScript | null | undefined;
   return s ? udtAsset(s) : CKB;
+}
+
+/**
+ * A real fee verifier: confirms a prepaid order's CKB fee invoice actually settled (`get_invoice` →
+ * `status === "Paid"`) before the LSP opens the channel. Wire this into `verifyFeePaid` so a client can't
+ * obtain inbound liquidity without paying.
+ *
+ * Note on the zero-capital flagship flow: a client that auto-accepts a pure-UDT channel with 0 has no
+ * Fiber outbound and therefore cannot settle a Fiber fee invoice — its fee must be paid out-of-band in
+ * CKB (on-chain, or from a pre-existing CKB channel). For that case the LSP settles the order through an
+ * out-of-band confirmation instead of this in-Fiber check. See docs/LSPS-Fiber.md §4.
+ */
+export function makeInvoiceFeeVerifier(rpc: FiberChannelRpcClient): (order: Order) => Promise<boolean> {
+  return async (order: Order) => {
+    if (order.payment.mode !== "prepaid") return true; // from_capacity settles in-channel, nothing to poll
+    const hash = order.payment.fee_payment_hash;
+    if (!hash) return false; // can't verify without a payment hash → refuse to provision
+    const { status } = await rpc.getInvoice(hash);
+    return status === "Paid";
+  };
 }

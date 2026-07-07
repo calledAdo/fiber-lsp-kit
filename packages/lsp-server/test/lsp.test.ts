@@ -7,7 +7,7 @@ import {
   type AssetOffering,
   type CreateOrderRequest,
 } from "@fiberlsp/protocol";
-import { Lsp, OrderError } from "@fiberlsp/server";
+import { Lsp, OrderError, makeInvoiceFeeVerifier } from "@fiberlsp/server";
 import { makeMockRpc } from "./mockRpc.js";
 
 const RUSD = udtAsset(
@@ -123,4 +123,107 @@ test("provisioning times out to failed when the channel never becomes ready", as
   });
   assert.equal(order.state, "failed");
   assert.match(order.failure_reason ?? "", /ChannelReady/);
+});
+
+test("liquidity() reports per-asset capacity read from channels", async () => {
+  const { lsp } = makeLsp();
+  await lsp.createOrder({
+    target_pubkey: "0xCLIENT",
+    asset: CKB,
+    lsp_balance: "50000",
+    client_balance: "2000",
+    fee_mode: "from_capacity",
+  });
+  const snap = await lsp.liquidity();
+  assert.equal(snap.lsp_pubkey, "0xLSP");
+  const ckb = snap.assets.find((a) => a.asset.kind === "CKB");
+  assert.ok(ckb, "CKB asset present in snapshot");
+  assert.equal(ckb.channel_count, 1);
+  assert.equal(ckb.ready_channel_count, 1);
+  assert.equal(ckb.outbound, "50000"); // LSP-funded local balance
+  assert.equal(ckb.inbound, "0");
+});
+
+function makeLspWithVerifier(invoiceStatus: string) {
+  const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true, invoiceStatus });
+  const rpc = new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl });
+  const lsp = new Lsp({
+    rpc,
+    lspPubkey: "0xLSP",
+    addresses: [],
+    supportedAssets: offerings,
+    feeModes: ["prepaid", "from_capacity"],
+    readyPollAttempts: 3,
+    readyPollIntervalMs: 0,
+    sleep: async () => {},
+    idgen: () => "order_fee",
+    now: () => 1_000,
+    verifyFeePaid: makeInvoiceFeeVerifier(rpc),
+  });
+  return { lsp, mock };
+}
+
+test("fee verifier blocks provisioning until the invoice is Paid", async () => {
+  const { lsp } = makeLspWithVerifier("Open"); // fee not settled yet
+  const order = await lsp.createOrder({
+    target_pubkey: "0xCLIENT",
+    target_address: "/ip4/127.0.0.1/tcp/8238",
+    asset: RUSD,
+    lsp_balance: "100000",
+    fee_mode: "prepaid",
+  });
+  assert.equal(order.state, "awaiting_payment");
+  await assert.rejects(
+    () => lsp.settleFee(order.order_id),
+    (e) => e instanceof OrderError && e.code === "fee_unpaid",
+  );
+  assert.equal(lsp.getOrder(order.order_id)?.state, "awaiting_payment"); // still not provisioned
+});
+
+test("fee verifier provisions once the invoice reports Paid", async () => {
+  const { lsp, mock } = makeLspWithVerifier("Paid");
+  const order = await lsp.createOrder({
+    target_pubkey: "0xCLIENT",
+    target_address: "/ip4/127.0.0.1/tcp/8238",
+    asset: RUSD,
+    lsp_balance: "100000",
+    fee_mode: "prepaid",
+  });
+  const settled = await lsp.settleFee(order.order_id);
+  assert.equal(settled.state, "channel_active");
+  assert.ok(mock.calls.includes("get_invoice"), "verifier queried get_invoice");
+  assert.ok(mock.calls.includes("open_channel"));
+});
+
+test("webhook_url receives a POST on each order state transition", async () => {
+  const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true });
+  const events: { url: string; state: string }[] = [];
+  const lsp = new Lsp({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
+    lspPubkey: "0xLSP",
+    addresses: [],
+    supportedAssets: offerings,
+    feeModes: ["prepaid", "from_capacity"],
+    readyPollAttempts: 3,
+    readyPollIntervalMs: 0,
+    sleep: async () => {},
+    idgen: () => "order_wh",
+    now: () => 1_000,
+    deliverWebhook: async (url, order) => {
+      events.push({ url, state: order.state });
+    },
+  });
+  await lsp.createOrder({
+    target_pubkey: "0xCLIENT",
+    asset: CKB,
+    lsp_balance: "50000",
+    client_balance: "2000",
+    fee_mode: "from_capacity",
+    webhook_url: "http://hook.test/orders",
+  });
+  await new Promise((r) => setTimeout(r, 0)); // flush best-effort deliveries
+  const states = events.map((e) => e.state);
+  assert.deepEqual([...new Set(events.map((e) => e.url))], ["http://hook.test/orders"]);
+  assert.ok(states.includes("opening"), "opening transition delivered");
+  assert.ok(states.includes("channel_active"), "channel_active transition delivered");
 });
