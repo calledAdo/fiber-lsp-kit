@@ -11,7 +11,8 @@ channel") to Fiber, and adds the thing Lightning structurally cannot do: **per-a
 — buy inbound capacity denominated in a specific UDT (e.g. RUSD), because FNN's `open_channel` funds
 channels with a `funding_udt_type_script`.
 
-This document specifies the wire protocol. The shared contracts live in `@fiberlsp/protocol`; the FNN JSON-RPC adapter lives in `@fiberlsp/fiber`; static registry and graph discovery live in `@fiberlsp/registry`; the reference implementation is `@fiberlsp/server` (LSP side) and `@fiberlsp/client` (merchant side).
+This document specifies the wire protocol. The shared contracts live in `@fiberlsp/protocol`; the FNN JSON-RPC adapter lives in `@fiberlsp/fiber`; static registry and graph discovery live in `@fiberlsp/registry`.
+The reference implementation is `@fiberlsp/server` (LSP side) and `@fiberlsp/client` (wallet/merchant side).
 
 ---
 

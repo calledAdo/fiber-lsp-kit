@@ -47,7 +47,7 @@ RUSD. So a merchant that wants a stablecoin is unreachable until an LSP opens a 
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
 | `@fiberlsp/server` | Reference LSP engine + REST API, single-node linked-hash `JitService`, and server-side merchant invoice-webhook service. |
-| `@fiberlsp/client` | Merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
+| `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |
 
 Boundary note for consumers: import `FiberChannelRpcClient`, `FetchLike`, channel/graph RPC types, and
