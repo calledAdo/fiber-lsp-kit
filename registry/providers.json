@@ -4,7 +4,7 @@
   "description": "Open discovery registry of Fiber LSP providers. A client fetches this, then calls each provider's /lsp/v1/info to compare live quotes. Add your provider via PR.",
   "providers": [
     {
-      "name": "RouteKit Reference LSP (testnet)",
+      "name": "Fiber LSP Kit Reference Server (testnet)",
       "base_url": "http://127.0.0.1:8080",
       "chain": "testnet",
       "operator": "fiber-lsp-kit",
