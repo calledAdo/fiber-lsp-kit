@@ -18,8 +18,8 @@ import {
   quoteFee,
   validateOrder,
 } from "@fiberlsp/protocol";
+import type { RegistryProvider } from "@fiberlsp/registry";
 import { LspClient, type HttpFetch } from "./LspClient.js";
-import type { RegistryProvider } from "./discover.js";
 
 export interface QuoteRequest {
   asset: Asset;
