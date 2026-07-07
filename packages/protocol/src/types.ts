@@ -58,13 +58,35 @@ export interface FeeSchedule {
   proportional_bps: number;
 }
 
+/**
+ * Recurring rent terms for a streaming lease (the ongoing phase). Denominated in the *channel's own asset*,
+ * paid per period out of revenue. See `lease.ts` and docs/LSPS-Fiber.md §5.
+ */
+export interface StreamTerms {
+  /** Rent per period, in basis points of the leased capacity (1 bp = 0.01% of capacity per period). */
+  rate_bps_per_period: number;
+  /** Length of one rent period in seconds (e.g. 3600 hourly, 86400 daily). */
+  period_seconds: number;
+  /** Consecutive missed periods tolerated before the LSP may close the channel. */
+  grace_periods: number;
+}
+
 export interface AssetOffering {
   asset: Asset;
   /** Minimum inbound capacity the LSP will provision, in the asset's base unit. */
   min_capacity: string;
+  /**
+   * The **activation fee** (always CKB): the one-time payment that opens the channel. It covers the LSP's
+   * on-chain funding cost and the first-period runway, and is the minimum to start a lease — see `stream`.
+   */
+  fee_schedule: FeeSchedule;
   /** Maximum inbound capacity the LSP will provision, in the asset's base unit. */
   max_capacity: string;
-  fee_schedule: FeeSchedule;
+  /**
+   * If present, this asset is offered as a **streaming lease** (the default): pay `fee_schedule` in CKB once
+   * to activate, then stream rent in the channel asset per these terms. Absent ⇒ a one-time purchase only.
+   */
+  stream?: StreamTerms;
 }
 
 /** Response of `GET /lsp/v1/info` — the LSP's self-description. */
@@ -77,6 +99,11 @@ export interface LspInfo {
   fee_modes: FeeMode[];
   /** How long an order stays open before it expires, in seconds. */
   order_expiry_seconds: number;
+  /**
+   * Present when the LSP offers JIT channels (hold-invoice provisioning — see jit.ts): the fee deducted
+   * from the first forwarded payment and the hold-window limits.
+   */
+  jit?: import("./jit.js").JitTerms;
   /** Optional human-facing metadata. */
   operator?: string;
   version?: string;
@@ -97,6 +124,11 @@ export interface CreateOrderRequest {
   fee_mode: FeeMode;
   /** Whether the channel should be public (announced/forwardable). Default true. */
   public?: boolean;
+  /**
+   * Optional callback URL. If set, the LSP POSTs `{ type: "order.updated", order }` to it on every
+   * order state transition (opening → channel_active / failed), so integrators don't have to poll.
+   */
+  webhook_url?: string;
 }
 
 /** Fee quote returned with an order. */
@@ -115,6 +147,8 @@ export type OrderPayment =
       /** BOLT11-style Fiber invoice the client settles to release the channel open. */
       fee_invoice: string;
       amount: string;
+      /** Payment hash of `fee_invoice`; the LSP polls `get_invoice` on it to confirm settlement. */
+      fee_payment_hash?: string;
     }
   | {
       mode: "from_capacity";
@@ -137,4 +171,23 @@ export interface Order {
   created_at: number;
   /** Human-readable reason when state === "failed". */
   failure_reason?: string;
+}
+
+/** Per-asset liquidity for `GET /lsp/v1/liquidity` — asset-specific inbound/outbound capacity. */
+export interface AssetLiquidity {
+  asset: Asset;
+  channel_count: number;
+  ready_channel_count: number;
+  /** Sum of the LSP's local balances in this asset — capacity it can send / inbound it has provisioned. */
+  outbound: string;
+  /** Sum of the LSP's remote balances in this asset — capacity it can receive. */
+  inbound: string;
+}
+
+/** Response of `GET /lsp/v1/liquidity` — the LSP's live capacity, grouped by asset. */
+export interface LiquiditySnapshot {
+  lsp_pubkey: string;
+  /** Unix seconds the snapshot was taken. */
+  generated_at: number;
+  assets: AssetLiquidity[];
 }

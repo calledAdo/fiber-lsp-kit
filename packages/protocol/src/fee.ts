@@ -60,7 +60,7 @@ export interface ValidationError {
  *    channel*, so that outbound must be CKB. A UDT channel can't pay a CKB fee from itself → use prepaid.
  *  - "from_capacity" requires client_balance (their CKB outbound) >= fee, because there is no push-at-open;
  *    the fee is an in-channel payment made right after the channel is ready.
- * See spec/LSPS-Fiber.md §Fee models.
+ * See docs/LSPS-Fiber.md §Fee models.
  */
 export function validateOrder(
   offering: AssetOffering,

@@ -4,3 +4,19 @@ dist/
 .DS_Store
 *.log
 .env
+
+# demo handoff artifact
+scripts/demo/.invoice.json
+
+scripts/demo/.lsp.json
+
+# Circom/SnarkJS generated artifacts
+packages/protocol/circuits/**/build/
+packages/protocol/circuits/**/*.sym
+packages/protocol/circuits/**/*.ptau
+packages/protocol/circuits/**/*.zkey
+packages/protocol/circuits/**/input.json
+packages/protocol/circuits/**/witness.wtns
+packages/protocol/circuits/**/proof.json
+packages/protocol/circuits/**/public.json
+packages/protocol/circuits/**/verification_key.json

@@ -8,8 +8,8 @@ const RUSD_SCRIPT = {
   args: "0x878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b",
 };
 
-// The exact molecule hex FNN returns for this RUSD udt_script — verified byte-for-byte against a live
-// testnet node in the RouteKit project. This is a regression anchor: if the encoder drifts, it breaks.
+// The exact molecule hex FNN returns for this RUSD udt_script — captured byte-for-byte from a live
+// testnet node's invoice. This is a regression anchor: if the encoder drifts, this test breaks.
 const RUSD_HEX =
   "0x550000001000000030000000310000001142755a044bf2ee358cba9f2da187ce928c91cd4dc8692ded0337efa677d21a0120000000878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b";
 
