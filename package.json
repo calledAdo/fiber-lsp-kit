@@ -8,9 +8,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/protocol packages/lsp-server packages/client",
+    "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client",
     "demo": "npm run build && node scripts/merchant-demo.mjs",
-    "typecheck": "npm run build -- --dry 2>/dev/null; tsc -b packages/protocol packages/lsp-server packages/client",
+    "typecheck": "npm run build -- --dry 2>/dev/null; tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",
     "server": "npm run build && npm -w @fiberlsp/server run start"

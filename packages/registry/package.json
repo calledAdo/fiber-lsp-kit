@@ -1,0 +1,23 @@
+{
+  "name": "@fiberlsp/registry",
+  "version": "0.0.0",
+  "description": "Static provider registry loading and graph discovery for Fiber LSP Kit.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@fiberlsp/fiber": "0.0.0",
+    "@fiberlsp/protocol": "0.0.0"
+  }
+}
