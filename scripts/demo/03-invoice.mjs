@@ -4,7 +4,8 @@
 //
 // The merchant node (node#3) mints a node-native RUSD invoice via the kit's `InvoiceService`, prints the
 // payable string + payment hash (the QR payload), and saves it to `.invoice.json` for step 3.
-import { FiberChannelRpcClient, udtAsset } from "../../packages/protocol/dist/index.js";
+import { udtAsset } from "../../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { InvoiceService } from "../../packages/client/dist/index.js";
 import { writeFileSync } from "node:fs";
 

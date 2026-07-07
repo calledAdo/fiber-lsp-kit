@@ -2,7 +2,8 @@
 //
 // The customer (node#2) mints an invoice and the LSP (node#1) — which holds RUSD outbound toward it — pays
 // it, shifting balance so the customer has spendable RUSD to route in step 04. Demo-only; not part of the SDK.
-import { FiberChannelRpcClient, udtAsset } from "../../packages/protocol/dist/index.js";
+import { udtAsset } from "../../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const RUSD_SCRIPT = {

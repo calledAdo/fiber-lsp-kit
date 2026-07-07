@@ -5,7 +5,8 @@
 // After activation (the CKB first payment) the lease's ongoing phase is streaming rent in the CHANNEL asset,
 // paid by keysend out of revenue over the same channel. This drives StreamingLease.payDue() for a few periods
 // against live nodes and shows (a) rent leaving the merchant, (b) it arriving at the LSP — proof of the model.
-import { FiberChannelRpcClient, udtAsset } from "../../packages/protocol/dist/index.js";
+import { udtAsset } from "../../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { StreamingLease } from "../../packages/client/dist/index.js";
 
 const RUSD_SCRIPT = { code_hash: "0x1142755a044bf2ee358cba9f2da187ce928c91cd4dc8692ded0337efa677d21a",

@@ -8,7 +8,8 @@
 //   • GOSSIP GRAPH (the more authentic, decentralized signal): every node broadcasts which UDTs it will
 //     auto-accept, on-chain-verifiable and registry-free. It carries no REST endpoint yet (see the upstream
 //     RFC), so today it's the trust/verification layer under the registry — the direction the ecosystem moves.
-import { FiberChannelRpcClient, udtAsset } from "../../packages/protocol/dist/index.js";
+import { udtAsset } from "../../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { discoverFromGraph, compareQuotes } from "../../packages/client/dist/index.js";
 import { writeFileSync } from "node:fs";
 

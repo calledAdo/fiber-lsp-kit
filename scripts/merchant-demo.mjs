@@ -13,7 +13,8 @@
 //   4. SettlementLedger records + reconciles + exports the receipt for accounting.
 //
 // The live 3-node version of this exact flow (with real routing) is in LIVE_ROUTED_RESULTS.md.
-import { FiberChannelRpcClient, udtAsset } from "../packages/protocol/dist/index.js";
+import { udtAsset } from "../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../packages/fiber/dist/index.js";
 import { InvoiceService, LiquidityMonitor, LspClient, buyInboundFromLsp, SettlementLedger } from "../packages/client/dist/index.js";
 import { Lsp, createApi, InvoiceWebhookService } from "../packages/lsp-server/dist/index.js";
 import { createServer } from "node:http";

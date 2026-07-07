@@ -5,7 +5,8 @@
 // Reads the invoice from step 2. The customer (node#2) has no direct channel to the merchant (node#3), so the
 // payment ROUTES node#2 → node#1(LSP) → node#3. Then the merchant's server-side `InvoiceWebhookService` sees it
 // settle, delivers an `invoice.paid` webhook to a real local sink, and `SettlementLedger` reconciles + exports.
-import { FiberChannelRpcClient, udtAsset } from "../../packages/protocol/dist/index.js";
+import { udtAsset } from "../../packages/protocol/dist/index.js";
+import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { InvoiceWebhookService } from "../../packages/lsp-server/dist/index.js";
 import { SettlementLedger } from "../../packages/client/dist/index.js";
 import { readFileSync } from "node:fs";
