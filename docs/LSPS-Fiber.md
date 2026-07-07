@@ -11,8 +11,7 @@ channel") to Fiber, and adds the thing Lightning structurally cannot do: **per-a
 — buy inbound capacity denominated in a specific UDT (e.g. RUSD), because FNN's `open_channel` funds
 channels with a `funding_udt_type_script`.
 
-This document specifies the wire protocol. The reference implementation is `@fiberlsp/server` (LSP side)
-and `@fiberlsp/client` (wallet side); the shared types live in `@fiberlsp/protocol`.
+This document specifies the wire protocol. The shared contracts live in `@fiberlsp/protocol`; the FNN JSON-RPC adapter lives in `@fiberlsp/fiber`; static registry and graph discovery live in `@fiberlsp/registry`; the reference implementation is `@fiberlsp/server` (LSP side) and `@fiberlsp/client` (merchant side).
 
 ---
 
@@ -257,6 +256,7 @@ created ──customer pays hold──▶ payment_held ──channel opening─�
 
 ## 9. Reuse
 
-`@fiberlsp/protocol` ships the types, `computeFee`/`validateOrder`, the molecule `Script` encoder, and a
-typed FNN RPC client. Any wallet or competing LSP can adopt them to interoperate — the protocol is the
-product, the reference server is just one conforming implementation.
+`@fiberlsp/protocol` ships the shared contracts: assets, order/JIT/lease/receipt types, fee/rent math,
+the molecule `Script` encoder, and linkage proof contracts. Node-facing FNN JSON-RPC helpers live in
+`@fiberlsp/fiber`. Any wallet or competing LSP can adopt the contracts to interoperate — the protocol is
+the product, the reference server is just one conforming implementation.

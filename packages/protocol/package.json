@@ -1,7 +1,7 @@
 {
   "name": "@fiberlsp/protocol",
   "version": "0.0.0",
-  "description": "LSPS-Fiber protocol types, message schemas, fee logic, and a channel-oriented FNN RPC client.",
+  "description": "LSPS-Fiber protocol types, message schemas, asset identity, fee math, lease math, receipts, and linkage proof contracts.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

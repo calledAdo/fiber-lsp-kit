@@ -43,10 +43,16 @@ RUSD. So a merchant that wants a stablecoin is unreachable until an LSP opens a 
 
 | Package | What it is |
 |---|---|
-| `@fiberlsp/protocol` | The LSPS-Fiber protocol as code — types, fee math, molecule `Script` encoder, typed FNN RPC client, shared `Receipt`/webhook wire format. |
-| `@fiberlsp/server` | Reference **LSP engine + REST API** (provisions inbound channels), the single-node linked-hash **`JitService`**, **and** a server-side merchant **invoice-webhook service**. |
-| `@fiberlsp/client` | Wallet/merchant SDK — provider **discovery** (registry + gossip graph), quote comparison, `buyInboundLiquidity`, `InvoiceService`, `MerchantCheckout`, **`JitCheckout`**, `StreamingLease`, `LiquidityMonitor`, `SettlementLedger`. |
+| `@fiberlsp/protocol` | The LSPS-Fiber contract layer: assets, order/JIT/lease/receipt types, fee/rent math, and linkage proof contracts. |
+| `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
+| `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
+| `@fiberlsp/server` | Reference LSP engine + REST API, single-node linked-hash `JitService`, and server-side merchant invoice-webhook service. |
+| `@fiberlsp/client` | Merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |
+
+Boundary note for consumers: import `FiberChannelRpcClient`, `FetchLike`, channel/graph RPC types, and
+`isChannelReady` from `@fiberlsp/fiber`. Registry discovery is available from `@fiberlsp/registry` and is
+re-exported by `@fiberlsp/client` for compatibility.
 
 ## Try it
 

@@ -2,8 +2,8 @@
  * @fiberlsp/protocol — the LSPS-Fiber protocol as code.
  *
  * Shared by the reference LSP server and the client SDK so both sides agree on message shapes, fee math,
- * asset identity, and the FNN RPC surface. This is the reusable artifact: any wallet or LSP can adopt
- * these types + `computeFee`/`validateOrder` and interoperate.
+ * asset identity, lease math, receipts, and linkage proof contracts. This is the reusable artifact:
+ * any wallet or LSP can adopt these contracts and interoperate.
  */
 export * from "./types.js";
 export * from "./num.js";
