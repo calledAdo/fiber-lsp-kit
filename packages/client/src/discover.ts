@@ -16,13 +16,12 @@
  */
 import {
   type Asset,
-  type GraphNodeInfo,
   type LspInfo,
-  FiberChannelRpcClient,
   asBig,
   canonicalAssetId,
   udtAsset,
 } from "@fiberlsp/protocol";
+import type { FiberChannelRpcClient, GraphNodeInfo } from "@fiberlsp/fiber";
 import { LspClient, type HttpFetch } from "./LspClient.js";
 
 export interface RegistryProvider {

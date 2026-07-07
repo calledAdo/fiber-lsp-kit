@@ -11,18 +11,17 @@ import {
   type JitOrder,
   type JitTerms,
   type LinkageVerifier,
-  FiberChannelRpcClient,
   asBig,
   assetEquals,
   assetUdtScript,
   canonicalAssetId,
   deriveHoldPreimageFromLeg,
   fraudEvidenceDualSha256,
-  isChannelReady,
   jitFee,
   jitForwardAmount,
   verifyDualSha256Linkage,
 } from "@fiberlsp/protocol";
+import { isChannelReady, type FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { channelAsset } from "./lsp.js";
 import { MemoryJitStore, type JitOrderRecord, type JitStore } from "./jitStore.js";
 import { makeKeyedLock, type KeyedLock } from "./keyedLock.js";

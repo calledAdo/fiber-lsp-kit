@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  FiberChannelRpcClient,
   udtAsset,
   CKB,
   type AssetOffering,
 } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { Lsp, createApi } from "@fiberlsp/server";
 import { makeMockRpc } from "../../lsp-server/test/mockRpc.js";
 import { LspClient, type HttpFetch } from "@fiberlsp/client";

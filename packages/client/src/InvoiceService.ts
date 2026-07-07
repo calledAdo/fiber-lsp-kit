@@ -16,14 +16,12 @@
 import {
   type Asset,
   type InvoiceStatus,
-  type RawChannel,
-  FiberChannelRpcClient,
   asBig,
   assetEquals,
   assetUdtScript,
-  isChannelReady,
   udtAsset,
 } from "@fiberlsp/protocol";
+import { isChannelReady, type FiberChannelRpcClient, type RawChannel } from "@fiberlsp/fiber";
 
 export interface InvoiceServiceConfig {
   /** The receiver's own FNN node. */

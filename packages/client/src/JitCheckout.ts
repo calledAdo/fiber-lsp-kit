@@ -10,12 +10,12 @@ import {
   type JitTerms,
   type LinkageProof,
   type LspInfo,
-  FiberChannelRpcClient,
   asBig,
   assetUdtScript,
   dualSha256,
   jitForwardAmount,
 } from "@fiberlsp/protocol";
+import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
 
 export interface JitCheckoutConfig {
   /** The merchant's own FNN node; issues the leg invoice and receives the forward. */

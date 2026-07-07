@@ -3,7 +3,8 @@
  * after an open_channel call it makes list_channels report a matching ChannelReady channel, exactly as a
  * live node would once the funding tx confirms.
  */
-import type { FetchLike, UdtTypeScript } from "@fiberlsp/protocol";
+import type { UdtTypeScript } from "@fiberlsp/protocol";
+import type { FetchLike } from "@fiberlsp/fiber";
 
 export interface MockRpcOpts {
   lspPubkey?: string;

@@ -11,7 +11,9 @@
  * consumes either interchangeably.
  */
 import type { Asset } from "./types.js";
-import type { InvoiceStatus } from "./rpc.js";
+
+/** FNN invoice status (from `CkbInvoiceStatus`; serialized PascalCase). `Paid` == settled. */
+export type InvoiceStatus = "Open" | "Cancelled" | "Expired" | "Received" | "Paid";
 
 export interface Receipt {
   /** Stable id for this settlement record (not the payment hash — a merchant-facing handle). */

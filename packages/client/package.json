@@ -17,6 +17,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@fiberlsp/fiber": "0.0.0",
     "@fiberlsp/protocol": "0.0.0"
   }
 }

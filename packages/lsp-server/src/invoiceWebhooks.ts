@@ -13,13 +13,13 @@ import {
   type Asset,
   type InvoiceStatus,
   type WebhookEvent,
-  FiberChannelRpcClient,
   assetUdtScript,
   buildReceipt,
   isInvoiceTerminal,
   toDecimal,
   webhookEventTypeFor,
 } from "@fiberlsp/protocol";
+import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { MemoryWatchStore, type InvoiceWatch, type WatchStore } from "./watchStore.js";
 
 /** Issue a fresh invoice on the merchant node and watch it. */

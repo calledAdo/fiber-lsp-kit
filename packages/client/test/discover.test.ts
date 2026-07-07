@@ -1,12 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  FiberChannelRpcClient,
   udtAsset,
-  type GraphNodeInfo,
-  type GraphNodesPage,
   type LspInfo,
 } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient, type GraphNodeInfo, type GraphNodesPage } from "@fiberlsp/fiber";
 import {
   discoverFromGraph,
   discoverProviders,

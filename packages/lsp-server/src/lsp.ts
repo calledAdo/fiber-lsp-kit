@@ -17,9 +17,7 @@ import {
   type LspInfo,
   type Order,
   type OrderPayment,
-  type RawChannel,
   type UdtTypeScript,
-  FiberChannelRpcClient,
   quoteFee,
   validateOrder,
   asBig,
@@ -28,8 +26,8 @@ import {
   canonicalAssetId,
   udtAsset,
   CKB,
-  isChannelReady,
 } from "@fiberlsp/protocol";
+import { isChannelReady, type FiberChannelRpcClient, type RawChannel } from "@fiberlsp/fiber";
 import { MemoryOrderStore, type OrderStore } from "./orderStore.js";
 
 export class OrderError extends Error {

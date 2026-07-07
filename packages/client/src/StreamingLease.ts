@@ -20,12 +20,12 @@
  */
 import {
   type Asset,
-  type FiberChannelRpcClient,
   type LeaseTerms,
   asBig,
   assetUdtScript,
   rentPerPeriod,
 } from "@fiberlsp/protocol";
+import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
 
 export interface RentPayment {
   /** 1-based index of this rent period within the lease's lifetime. */

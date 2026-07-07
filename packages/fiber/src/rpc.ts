@@ -12,13 +12,10 @@
  *
  * FNN encodes u64/u128 as 0x-hex strings; we convert amounts via num.ts at this boundary only.
  */
-import type { UdtTypeScript } from "./types.js";
-import { asBig, toHex } from "./num.js";
+import type { InvoiceStatus, UdtTypeScript } from "@fiberlsp/protocol";
+import { asBig, toHex } from "@fiberlsp/protocol";
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<{ json(): Promise<unknown> }>;
-
-/** FNN invoice status (from `CkbInvoiceStatus`; serialized PascalCase). `Paid` == settled. */
-export type InvoiceStatus = "Open" | "Cancelled" | "Expired" | "Received" | "Paid";
 
 export interface RpcClientConfig {
   rpcUrl: string;

@@ -23,7 +23,8 @@
  */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { FiberChannelRpcClient, udtAsset, CKB, type AssetOffering } from "@fiberlsp/protocol";
+import { udtAsset, CKB, type AssetOffering } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { Lsp, makeInvoiceFeeVerifier } from "./lsp.js";
 import { createApi } from "./api.js";
 import { FileOrderStore } from "./orderStore.js";

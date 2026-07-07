@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FiberChannelRpcClient, udtAsset, type UdtTypeScript, type WebhookEvent } from "@fiberlsp/protocol";
+import { udtAsset, type UdtTypeScript, type WebhookEvent } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { InvoiceWebhookService, FileWatchStore } from "@fiberlsp/server";
 
 const RUSD_SCRIPT: UdtTypeScript = {

@@ -10,7 +10,6 @@ export * from "./num.js";
 export * from "./molecule.js";
 export * from "./assets.js";
 export * from "./fee.js";
-export * from "./rpc.js";
 export * from "./receipt.js";
 export * from "./lease.js";
 export * from "./jit.js";

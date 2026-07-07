@@ -18,6 +18,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@fiberlsp/fiber": "0.0.0",
     "@fiberlsp/protocol": "0.0.0"
   }
 }

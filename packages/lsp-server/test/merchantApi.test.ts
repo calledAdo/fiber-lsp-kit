@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FiberChannelRpcClient, udtAsset, type UdtTypeScript } from "@fiberlsp/protocol";
+import { udtAsset, type UdtTypeScript } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { InvoiceWebhookService, createMerchantApi } from "@fiberlsp/server";
 
 const RUSD_SCRIPT: UdtTypeScript = {

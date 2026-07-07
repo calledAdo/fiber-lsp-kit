@@ -1,14 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  FiberChannelRpcClient,
   dualSha256,
   exposedSecretProof,
   udtAsset,
-  type FetchLike,
   type JitOrder,
   type JitTerms,
 } from "@fiberlsp/protocol";
+import { FiberChannelRpcClient, type FetchLike } from "@fiberlsp/fiber";
 import { JitCheckout, JitCheckoutError } from "@fiberlsp/client";
 
 const RUSD = udtAsset(
