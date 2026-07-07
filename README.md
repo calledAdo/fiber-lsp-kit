@@ -1,7 +1,5 @@
 # Fiber LSP Kit
 
-<!-- After pushing, replace OWNER with your GitHub account/org for a live badge. -->
-[![build-and-test](https://github.com/OWNER/fiber-lsp-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/fiber-lsp-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 > **Buy inbound liquidity for a Fiber wallet — in any asset, including stablecoins — then invoice, get paid, and reconcile.**
@@ -18,13 +16,15 @@ conforming implementation.
 |---|---|
 | **Category** | 3 — Merchant, Liquidity, LSP & Multi-Asset Infrastructure |
 | **Event** | *"Gone in 60ms: Fiber Network Infrastructure Hackathon"* (1–15 July 2026) |
-| **Team** | _<!-- add names / GitHub handles -->_ |
-| **Video** | _<!-- add link -->_ |
-| **Hosted demo** | _<!-- add link (deploy `apps/demo-console`) -->_ |
+| **Team** | Listed in the CKBoost submission metadata |
+| **Video** | Linked from the CKBoost submission |
+| **Hosted demo** | Deploy `apps/demo-console`; final URL lives in the CKBoost submission |
 
 | Where to look | For |
 |---|---|
 | [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) | **the protocol spec** — wire format, REST API, fee model (the technical breakdown) |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | package boundaries, runtime surfaces, discovery model, and what is working today |
+| [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md) | single-node linked-hash JIT checkout, APIs, security model, and setup modes |
 | [`scripts/demo/`](./scripts/demo) | six runnable scripts reproducing the whole flow on live testnet nodes |
 | [`docs/node-setup.md`](./docs/node-setup.md) | prerequisite for the above — standing up funded testnet `fnn` nodes |
 | [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + an RFC we're contributing back to the Fiber team |
@@ -48,6 +48,7 @@ RUSD. So a merchant that wants a stablecoin is unreachable until an LSP opens a 
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
 | `@fiberlsp/server` | Reference LSP engine + REST API, single-node linked-hash `JitService`, and server-side merchant invoice-webhook service. |
 | `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
+| `registry/providers.json` | Git-hosted provider registry file; providers can be added by PR, and merchants can download or bundle it. |
 | `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |
 
 Boundary note for consumers: import `FiberChannelRpcClient`, `FetchLike`, channel/graph RPC types, and
@@ -91,7 +92,8 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   though a live merchant Fiber node still needs enough CKB for its own cell reserve.
   See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §6.
 - **Discovery.** Two sources, the wallet's choice: a **registry** of LSP REST endpoints (the practical default —
-  fast, orderable immediately) and the **gossip graph** (the more authentic, on-chain-verifiable capability
+  fast, orderable immediately, shipped as [`registry/providers.json`](./registry/providers.json)) and the
+  **gossip graph** (the more authentic, on-chain-verifiable capability
   signal, registry-free). See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md).
 - **Getting paid.** The merchant issues a node-native invoice; the payer routes to it over the gossip graph via
   HTLC/TLC hops unlocked by one shared preimage. We proved a real **3-node routed** RUSD payment where the LSP
@@ -111,8 +113,8 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 | | |
 |---|---|
 | **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce with [`scripts/demo/`](./scripts/demo). |
-| **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** (a local `providers.json`) with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
-| **Needed for production** | auth + rate-limiting on the LSP REST · a hosted registry (or the native LSP-endpoint advertisement, [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md)) · on-chain fee verification for the zero-capital *purchase* case · production linkage-proof setup for single-node JIT · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf, RFC sketched in the findings doc). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
+| **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
+| **Needed for production** | auth + rate-limiting on the LSP REST · native LSP endpoint and capability advertisement in the Fiber graph · on-chain fee verification for the zero-capital *purchase* case · production linkage-proof artifact distribution for single-node JIT · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf, RFC sketched in the findings doc). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
 
 ## License
 
@@ -120,6 +122,6 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 ---
 
-<sub>**Submission deliverables:** project summary + gap + category → here · team/video/hosted-demo → header ·
-runnable demo → `npm run demo` · technical breakdown → [spec](./docs/LSPS-Fiber.md) · repo/open-source →
+<sub>**Submission deliverables:** project summary + gap + category → here · team/video/hosted-demo → CKBoost submission ·
+runnable demo → `npm run demo` · technical breakdown → [spec](./docs/LSPS-Fiber.md) + [architecture](./docs/ARCHITECTURE.md) · repo/open-source →
 [LICENSE](./LICENSE) · roadmap → [ROADMAP](./ROADMAP.md) · AI claim → [AI-USAGE](./AI-USAGE.md).</sub>

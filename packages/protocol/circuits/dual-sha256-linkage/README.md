@@ -13,6 +13,22 @@ B = sha256("LSPS-FIBER/JIT/LEG/v1\0"  || S)
 
 Matches `@fiberlsp/protocol` `linkageDualSha256.ts` (`scheme: groth16-dual-sha256-v1`).
 
+## Repository policy
+
+The repo commits the circuit source and instructions only. Generated proving artifacts are intentionally not
+tracked:
+
+- `build/`
+- `.ptau`
+- `.zkey`
+- witness files
+- proof/public signal JSON
+- `verification_key.json`
+
+Judges do not need to build this circuit to run the normal demo (`npm run demo`) or inspect the JIT protocol.
+Production deployments should publish audited release artifacts separately: the merchant needs the proving
+runtime plus `.wasm` and final `.zkey`, while the LSP needs the matching `verification_key.json`.
+
 ## Prerequisites
 
 Use a Circom 2 compiler binary. Do not use the deprecated `circom` npm package; it is Circom 0.5 and cannot

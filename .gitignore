@@ -5,6 +5,11 @@ dist/
 *.log
 .env
 
+# Local planning / agent working docs
+docs/superpowers/
+.local-docs/
+docs-private/
+
 # demo handoff artifact
 scripts/demo/.invoice.json
 

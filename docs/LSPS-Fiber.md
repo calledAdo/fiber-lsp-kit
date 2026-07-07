@@ -11,8 +11,10 @@ channel") to Fiber, and adds the thing Lightning structurally cannot do: **per-a
 — buy inbound capacity denominated in a specific UDT (e.g. RUSD), because FNN's `open_channel` funds
 channels with a `funding_udt_type_script`.
 
-This document specifies the wire protocol. The shared contracts live in `@fiberlsp/protocol`; the FNN JSON-RPC adapter lives in `@fiberlsp/fiber`; static registry and graph discovery live in `@fiberlsp/registry`.
+This document specifies the wire protocol. The shared contracts live in `@fiberlsp/protocol`; the FNN JSON-RPC
+adapter lives in `@fiberlsp/fiber`; static registry and graph discovery live in `@fiberlsp/registry`.
 The reference implementation is `@fiberlsp/server` (LSP side) and `@fiberlsp/client` (wallet/merchant side).
+For package boundaries and runtime surfaces, see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 
@@ -186,7 +188,8 @@ The merchant proves, before the LSP commits capital, that `A` and `B` are linked
 revealing `S`. The reference protocol uses `LinkageVerifier`; production uses a zero-knowledge proof. The
 `exposed-secret-v1` proof is sound but reveals `S`, so it is test-only and must be explicitly enabled.
 
-**The flow** (`POST /lsp/v1/jit/orders`, reference: `JitService` server-side, `JitCheckout` in the SDK):
+**The flow** (`POST /lsp/v1/jit/orders`, reference: `JitService` server-side, `JitCheckout` in the SDK;
+see [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md) for API parameters and setup modes):
 
 ```text
 1. merchant SDK generates S and derives hold_hash A + leg_hash B

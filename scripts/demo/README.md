@@ -1,7 +1,8 @@
 # Demo harness — reproduce the whole flow
 
-> **This folder is a demo / judge-testing harness — not part of the published SDK.** The product is the three
-> packages under `packages/*`; these scripts just *drive* them against live nodes so the flow is reproducible.
+> **This folder is a demo / judge-testing harness — not part of the published SDK.** The product is the
+> protocol, SDK, registry, Fiber adapter, and reference server under `packages/*`; these scripts just *drive*
+> them against live nodes so the flow is reproducible.
 > For a zero-setup version, `npm run demo` (repo root) runs the same flow **node-lessly** in ~2 seconds.
 
 Six single-purpose, re-runnable scripts that walk the full merchant lifecycle over the **real kit**:
