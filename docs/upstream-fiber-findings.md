@@ -193,9 +193,9 @@ channel, and payment state transitions (Lightning's `invoicestream` / channel-ev
 
 **Severity:** low (enhancement; unlocks a cleaner construction)
 
-**Context.** We showed single-node atomic JIT is possible today by deriving two tagged hashes from one merchant
-secret (`A = sha256(TAG_HOLD || S)`, `B = sha256(TAG_LEG || S)`), but it needs an extra proof that A and B are
-linked by the same hidden secret. Hashes are not homomorphic: there is no public `convert(A) → B` without
+**Context.** We showed single-node atomic JIT is possible today by deriving two hashes from one merchant
+secret, kept to the 32-byte preimage a live node accepts (`B = sha256(S)`, `A = sha256(sha256(TAG_HOLD || S))`),
+but it needs an extra proof that A and B are linked by the same hidden secret. Hashes are not homomorphic: there is no public `convert(A) → B` without
 knowing the secret, and no way to *verify* the linkage without a ZK proof or a fraud bond.
 
 **What PTLCs give.** With point (adaptor) locks instead of hash locks, a lock is `A = a·G`. A second lock
@@ -207,3 +207,32 @@ all get simpler.
 
 **Ask.** Track PTLC / adaptor-signature TLCs on the Fiber roadmap. Bitcoin Lightning is making the same
 HTLC→PTLC move; CKB's Schnorr-friendly stack makes it natural here too.
+
+---
+
+## 10. `node_announcement` propagation lags `channel_announcement`, so a new node is undiscoverable by capability
+
+**Severity:** medium (breaks graph-based discovery of a newly-online provider)
+
+**Context.** Capability discovery (which UDTs a node auto-accepts, its addresses) reads `graph_nodes` — i.e. it
+depends on the node's `node_announcement`. On a freshly (re)started node we observed the two gossip messages
+propagate very differently.
+
+**Repro (measured live on testnet).**
+1. Boot a funded node N that has one **public** `ChannelReady` channel and is directly peered with a
+   well-connected node L.
+2. From L's and a third node's RPC, poll `graph_channels` and `graph_nodes` for N.
+3. Within a couple of minutes N's **`channel_announcement` is present** in peers' `graph_channels`, but its
+   **`node_announcement` is absent** from `graph_nodes` — **even on L, which is directly connected to N** —
+   and stays absent for 15+ minutes.
+
+**Effect.** `graph_channels` shows an edge touching N, but there is no node record carrying N's
+`udt_cfg_infos`/addresses, so `discoverFromGraph`-style capability discovery cannot surface N at all. A newly
+announced LSP is therefore not graph-discoverable for a long time, even though it is fully operational and
+orderable via its REST endpoint immediately. (This is the concrete reason our SDK treats the static registry as
+the default discovery path and the gossip graph as a slower, authenticating layer — see finding #3.)
+
+**Ask.** Re-broadcast `node_announcement` more eagerly — at least when a node's first `channel_announcement`
+becomes relayable and on new peer connections — and/or relay a buffered `node_announcement` to peers once the
+supporting channel is known, so capability discovery converges on roughly the same timescale as channel
+discovery. Relates to #3 (native LSP capability advertisement) and #8 (no push/subscription surface).
