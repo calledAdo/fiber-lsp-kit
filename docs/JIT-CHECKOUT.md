@@ -21,12 +21,21 @@ This is atomic from the payment perspective: deliver to the merchant or refund t
 
 One FNN node cannot safely hold `invoice(H)` and also send `payment(H)` — it can mark its own invoice paid and
 reject the held TLC. So the customer hold and the merchant leg use two different hashes derived from one
-merchant secret `S`, linked by a zero-knowledge proof the LSP verifies before committing capital. Paying the
-leg reveals `S`, from which the LSP derives the hold preimage and settles.
+merchant secret `S`. An FNN invoice preimage is a fixed 32-byte `Hash256`, so both preimages are kept to 32
+bytes — the domain-tagged value is hashed down rather than fed in raw:
 
-The exact hashes, the proof scheme (`groth16-dual-sha256`, or the test-only `exposed-secret`), and why both
-preimages are kept to 32 bytes are specified once in
-[`LSPS-Fiber.md` §6](./LSPS-Fiber.md#6-jit-channels--single-node-linked-hash-hold-provisioning).
+```text
+S           = merchant-generated 32-byte secret
+leg_hash  B = sha256(S)                              (leg invoice; preimage = S)
+hold_hash A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
+                                                     (hold invoice; preimage = sha256(TAG || S))
+```
+
+Paying the leg reveals `S`; the LSP derives the hold preimage `sha256(TAG || S)` and settles the hold. The tag
+is essential — without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone settle
+the hold. The LSP verifies a proof that `A` and `B` come from one hidden `S` before committing capital: in
+production `groth16-dual-sha256` (a Groth16 proof of `∃S : sha256(S)=B ∧ sha256(sha256(TAG||S))=A`), or the
+test-only `exposed-secret`, which reveals `S` and is not a production mode.
 
 ## Merchant SDK API
 

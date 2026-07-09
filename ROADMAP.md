@@ -51,6 +51,5 @@ those makes the provisioning path more robust for every LSP, not just this one.
 
 ## Continuation
 
-We intend to continue this work beyond the hackathon and would pursue a **Nervos Community Fund DAO grant**
-to take the reference server to a production-grade, operator-runnable LSP — the piece the Fiber ecosystem
-needs before wallets can offer one-tap "receive any asset."
+The intent is to take the reference server to a production-grade, operator-runnable LSP — the piece the Fiber
+ecosystem needs before wallets can offer one-tap "receive any asset."

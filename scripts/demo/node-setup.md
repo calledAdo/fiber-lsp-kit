@@ -1,7 +1,7 @@
 # Running Fiber nodes (for the live demo)
 
 **You do not need this to evaluate the kit** — `npm run demo` (repo root) reproduces the entire flow with zero
-setup. This guide is for reproducing the **live, on-chain** scripts in [`scripts/demo/`](../scripts/demo), which
+setup. This guide is for reproducing the **live, on-chain** scripts in [this folder](.), which
 need three real Fiber (`fnn`) nodes on CKB testnet.
 
 Standing up funded testnet nodes is genuinely involved (keys, faucets, RUSD, p2p handshakes) — that's the honest
@@ -89,12 +89,12 @@ handles the LSP ↔ merchant connect for you.
 
 ## 6. Run the LSP server + the demo
 
-See [`scripts/demo/README.md`](../scripts/demo/README.md) for the server command and the demo sequence.
+See [`README.md`](./README.md) for the server command and the demo sequence.
 
 ## 7. (optional) Enable single-node JIT
 
 JIT now runs on the same LSP node as the normal server. There is no fourth node and no `JIT_HUB_RPC_URL`.
-The mechanism and API parameters are documented in [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md).
+The mechanism and API parameters are documented in [`JIT-CHECKOUT.md`](../../docs/JIT-CHECKOUT.md).
 
 To expose `/lsp/v1/jit/*`, start the server with a production linkage verifier:
 

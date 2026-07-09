@@ -1,6 +1,6 @@
 # Demo harness — reproduce the whole flow
 
-> **This folder is a demo / judge-testing harness — not part of the published SDK.** The product is the
+> **This folder is a demo harness — not part of the published SDK.** The product is the
 > protocol, SDK, registry, Fiber adapter, and reference server under `packages/*`; these scripts just *drive*
 > them against live nodes so the flow is reproducible.
 > For a zero-setup version, `npm run demo` (repo root) runs the same flow **node-lessly** in ~2 seconds.
@@ -27,7 +27,7 @@ node scripts/demo/05-stream-rent.mjs   # merchant STREAMS RENT (keysend RUSD) to
 ## Prerequisites (do this before recording)
 
 > **Getting `fnn`, writing the configs, funding, and peering the nodes is covered step-by-step in
-> [`../../docs/node-setup.md`](../../docs/node-setup.md).** (No nodes to spare? `npm run demo` needs none.)
+> [`node-setup.md`](./node-setup.md).** (No nodes to spare? `npm run demo` needs none.)
 
 Three `fnn` nodes running on CKB testnet, funded, and peered:
 

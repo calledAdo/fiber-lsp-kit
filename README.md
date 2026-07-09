@@ -12,23 +12,13 @@ server, and a wallet SDK to **buy per-asset inbound**, then **invoice → get pa
 It is **infrastructure, not an app** — the **LSPS-Fiber** protocol is the product; the server is one
 conforming implementation.
 
-|  |  |
-|---|---|
-| **Category** | 3 — Merchant, Liquidity, LSP & Multi-Asset Infrastructure |
-| **Event** | *"Gone in 60ms: Fiber Network Infrastructure Hackathon"* (1–15 July 2026) |
-| **Team** | Listed in the CKBoost submission metadata |
-| **Video** | Linked from the CKBoost submission |
-| **Hosted demo** | Deploy `apps/demo-console`; final URL lives in the CKBoost submission |
-
 | Where to look | For |
 |---|---|
-| [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) | **the protocol spec** — wire format, REST API, fee model (the technical breakdown) |
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | package boundaries, runtime surfaces, discovery model, and what is working today |
-| [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md) | single-node linked-hash JIT checkout, APIs, security model, and setup modes |
-| [`scripts/demo/`](./scripts/demo) | six runnable scripts reproducing the whole flow on live testnet nodes |
-| [`docs/node-setup.md`](./docs/node-setup.md) | prerequisite for the above — standing up funded testnet `fnn` nodes |
-| [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + an RFC we're contributing back to the Fiber team |
-| [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | future roadmap · AI allowance claim + testing regime |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, discovery, and how it composes |
+| [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md) | single-node linked-hash JIT checkout — construction, APIs, timing discipline, artifact distribution |
+| [`scripts/demo/`](./scripts/demo) | runnable scripts reproducing the whole flow on live testnet nodes |
+| [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + RFCs for the Fiber team |
+| [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | roadmap · AI usage |
 
 ---
 
@@ -69,7 +59,7 @@ real local HTTP webhook sink, printing the whole flow: detect no inbound → buy
 invoice → get paid → `invoice.paid` webhook → reconcile + export CSV.
 
 **Reproduce it live** against real Fiber nodes (discover → buy inbound → invoice → routed pay → stream rent): set up the
-testnet nodes ([`docs/node-setup.md`](./docs/node-setup.md)), then run the scripts in
+testnet nodes ([`scripts/demo/node-setup.md`](./scripts/demo/node-setup.md)), then run the scripts in
 [`scripts/demo/`](./scripts/demo).
 
 Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
@@ -83,27 +73,27 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   **CKB** first payment that opens the channel and is the minimum stake — then **streaming** rent in the
   **channel's own asset**, paid by keysend out of revenue over the same channel (no second channel, no oracle).
   Rent aligns incentives: an LSP that closes early forfeits future rent, and paying rent back **restores the
-  merchant's inbound**. See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §5.
+  merchant's inbound**. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (Design decisions → leasing).
 - **JIT channels (atomic).** A merchant with **zero channels** shows a customer a **hold invoice**; the
   customer's payment is *captured and held* while the LSP opens a fresh channel on-chain, then forwarded
   (minus the JIT fee). The current JIT path is **single-node linked-hash JIT**: the customer hold hash and
   merchant leg hash are different but proven linked, so the LSP can settle the customer hold only after the
   merchant leg reveals the linked preimage. **The first sale buys the channel** — no out-of-band activation fee,
   though a live merchant Fiber node still needs enough CKB for its own cell reserve.
-  See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §6.
+  See [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md).
 - **Discovery.** The primary path is a **registry** of LSP REST endpoints — fast and immediately orderable,
   shipped as [`registry/providers.json`](./registry/providers.json) (a public phonebook; add yours by PR). It
   carries only static identity; live terms come from each provider's `/lsp/v1/info`. Richer **gossip-graph**
   discovery (reading auto-accept capability straight from the on-chain graph) also works today for established
   nodes and is a forward-looking layer we're developing further — a newly-announced node propagates its
   capability slowly (see [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) #10), so the
-  registry stays the dependable default. See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md).
+  registry stays the dependable default. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (Discovery).
 - **Getting paid.** The merchant issues a node-native invoice; the payer routes to it over the gossip graph via
   HTLC/TLC hops unlocked by one shared preimage. A **routed** payment through the LSP hub earns it a forwarding
   fee, and the merchant's backend receives an `invoice.paid` webhook and a reconciled ledger.
 
-The full **protocol, REST API, and fee model** are in **[`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md)**; the live
-integration facts we pinned from FNN source are in **[`AI-USAGE.md`](./AI-USAGE.md)**.
+The full **protocol, REST API, and fee model** are in **[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)**; the
+FNN integration facts pinned from source are in **[`AI-USAGE.md`](./AI-USAGE.md)**.
 
 ```ts
 // A fresh wallet with only CKB buys 10 RUSD of INBOUND capacity:
@@ -121,10 +111,5 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 ## License
 
-[MIT](./LICENSE) — fully open source. See [`ROADMAP.md`](./ROADMAP.md) for what's next and [`AI-USAGE.md`](./AI-USAGE.md) for the AI allowance claim.
-
----
-
-<sub>**Submission deliverables:** project summary + gap + category → here · team/video/hosted-demo → CKBoost submission ·
-runnable demo → `npm run demo` · technical breakdown → [spec](./docs/LSPS-Fiber.md) + [architecture](./docs/ARCHITECTURE.md) · repo/open-source →
-[LICENSE](./LICENSE) · roadmap → [ROADMAP](./ROADMAP.md) · AI claim → [AI-USAGE](./AI-USAGE.md).</sub>
+[MIT](./LICENSE) — fully open source. See [`ROADMAP.md`](./ROADMAP.md) for what's next and
+[`AI-USAGE.md`](./AI-USAGE.md) for how AI was used.
