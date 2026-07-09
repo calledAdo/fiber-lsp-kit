@@ -32,7 +32,9 @@ tracked:
 
 Judges do not need to build this circuit to run the normal demo (`npm run demo`) or inspect the JIT protocol.
 Production deployments should publish audited release artifacts separately: the merchant needs the proving
-runtime plus `.wasm` and final `.zkey`, while the LSP needs the matching `verification_key.json`.
+runtime plus `.wasm` and final `.zkey`, while the LSP needs the matching `verification_key.json`. Who needs
+which file, what trust each carries, and why to ship them as Release assets (not in git) are in
+[`../../../../docs/zk-artifacts.md`](../../../../docs/zk-artifacts.md).
 
 ## Prerequisites
 

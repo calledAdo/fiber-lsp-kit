@@ -7,6 +7,7 @@
       "name": "Fiber LSP Kit Reference Server (testnet)",
       "base_url": "http://127.0.0.1:8080",
       "chain": "testnet",
+      "lsp_pubkey": "023dda5d5349345ca6a26e7389f2f52e59d85f4f833617865675078e8964230109",
       "operator": "fiber-lsp-kit",
       "note": "Local reference server bundled with this repo. Points at your own FNN node."
     }

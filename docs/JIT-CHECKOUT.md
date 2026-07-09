@@ -188,7 +188,10 @@ control flow, but it is not the security model.
 
 The circuit source is in
 [`packages/protocol/circuits/dual-sha256-linkage`](../packages/protocol/circuits/dual-sha256-linkage). Generated
-`.zkey`, `.ptau`, witness, proof, and verification-key files are intentionally ignored by git.
+`.zkey`, `.ptau`, witness, proof, and verification-key files are intentionally ignored by git. Integrators do
+**not** run the ceremony — they download the artifacts: the merchant needs `.wasm` + final `.zkey` to prove,
+the LSP needs `verification_key.json` to verify. Which file carries what trust, and how to distribute them, is
+in [`zk-artifacts.md`](./zk-artifacts.md).
 
 ## Latency
 

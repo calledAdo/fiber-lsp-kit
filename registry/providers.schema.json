@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/fiber-lsp-kit/registry/providers.schema.json",
+  "title": "Fiber LSP provider registry",
+  "description": "A public phonebook of Fiber LSP endpoints. It carries ONLY static identity — a client resolves live, dynamic terms (fees, capacity, JIT support) by calling each provider's GET /lsp/v1/info. Add a provider by pull request.",
+  "type": "object",
+  "required": ["version", "providers"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer", "const": 1 },
+    "description": { "type": "string" },
+    "providers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/provider" }
+    }
+  },
+  "definitions": {
+    "provider": {
+      "type": "object",
+      "description": "One LSP's static identity. No pricing, capacity, liquidity, or channel-topology fields — those are dynamic and are read live from /lsp/v1/info (terms) or the gossip graph (topology), never trusted from this file.",
+      "required": ["name", "base_url", "chain"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable provider name.",
+          "minLength": 1
+        },
+        "base_url": {
+          "type": "string",
+          "description": "The LSP REST base URL (LSPS-Fiber). The client appends /lsp/v1/*.",
+          "format": "uri"
+        },
+        "chain": {
+          "type": "string",
+          "description": "Chain the LSP serves.",
+          "enum": ["testnet", "mainnet"]
+        },
+        "lsp_pubkey": {
+          "type": "string",
+          "description": "The LSP node's Fiber pubkey (0x-hex). Recommended: lets a client cross-verify the endpoint against the on-graph node and merge registry + gossip entries by identity.",
+          "pattern": "^(0x)?[0-9a-fA-F]{66}$"
+        },
+        "operator": {
+          "type": "string",
+          "description": "Who runs this provider (org or handle)."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional free-text note."
+        }
+      }
+    }
+  }
+}
