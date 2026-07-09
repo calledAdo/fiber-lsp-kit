@@ -174,39 +174,43 @@ invoices and a linked-hash construction that works with one LSP node.
 
 The same-hash design is not safe on one node: a node that holds `invoice(H)` and later sends `payment(H)`
 can mark its own invoice paid and reject the held TLC. The canonical JIT flow therefore derives two
-different SHA-256 hashes from one merchant secret:
+different SHA-256 hashes from one merchant secret. An FNN invoice preimage is a fixed 32-byte `Hash256`
+(verified live: a longer preimage is rejected with "failed to convert vector into type"), so both invoice
+**preimages are kept to 32 bytes** — the domain-tagged value is hashed down rather than fed in raw:
 
 ```text
 S            = merchant-generated 32-byte secret
-P_hold       = "LSPS-FIBER/JIT/HOLD/v1\0" || S
-P_leg        = "LSPS-FIBER/JIT/LEG/v1\0"  || S
+leg_hash B   = sha256(S)                              (leg invoice; preimage = S, 32 bytes)
+P_hold       = sha256("LSPS-FIBER/JIT/HOLD\0" || S) (32-byte hold preimage)
 hold_hash A  = sha256(P_hold)
-leg_hash B   = sha256(P_leg)
 ```
 
+Paying the leg reveals `S`; the LSP derives `P_hold = sha256(TAG || S)` and settles the hold. The tag is
+essential — without it `P_hold` would be `sha256(S) = B`, which is public, letting anyone settle the hold.
 The merchant proves, before the LSP commits capital, that `A` and `B` are linked by one secret without
-revealing `S`. The reference protocol uses `LinkageVerifier`; production uses a zero-knowledge proof. The
-`exposed-secret-v1` proof is sound but reveals `S`, so it is test-only and must be explicitly enabled.
+revealing `S` (statement: `∃S : sha256(S)=B ∧ sha256(sha256(TAG||S))=A`). The reference protocol uses
+`LinkageVerifier`; production uses a zero-knowledge proof (`groth16-dual-sha256`). The `exposed-secret`
+proof is sound but reveals `S`, so it is test-only and must be explicitly enabled.
 
 **The flow** (`POST /lsp/v1/jit/orders`, reference: `JitService` server-side, `JitCheckout` in the SDK;
 see [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md) for API parameters and setup modes):
 
 ```text
 1. merchant SDK generates S and derives hold_hash A + leg_hash B
-2. merchant SDK issues its own LEG invoice(B, amount - jit_fee, preimage = P_leg)
+2. merchant SDK issues its own LEG invoice(B, amount - jit_fee, preimage = S)
 3. merchant -> LSP: JIT intent { A, B, leg invoice, linkage proof, gross amount }
 4. LSP verifies proof, leg hash, leg amount, asset policy and capacity policy
 5. LSP returns an order id, bearer order token, and customer-facing HOLD invoice(A, gross amount)
 6. customer pays the hold invoice -> funds are held at the LSP node
 7. LSP opens a channel to the merchant
 8. LSP pays the merchant's leg invoice(B) over the fresh channel
-9. LSP learns P_leg, derives P_hold, and calls settle_invoice(A, P_hold)
+9. LSP learns S, derives P_hold = sha256(TAG || S), and calls settle_invoice(A, P_hold)
 10. customer payment flips Success; merchant keeps amount - jit_fee
 ```
 
 If `get_payment` exposes the settled leg preimage, the LSP settles without a merchant callback. If the node
-does not expose it, the merchant SDK calls `POST /lsp/v1/jit/orders/:id/reveal` with `P_leg` only after its
-leg invoice is `Paid`. Wrong reveals are rejected and do not change terminal state.
+does not expose it, the merchant SDK calls `POST /lsp/v1/jit/orders/:id/reveal` with the leg preimage `S`
+only after its leg invoice is `Paid`. Wrong reveals are rejected and do not change terminal state.
 
 **Deliver-or-refund.** The LSP can only collect the customer's held funds after the merchant leg has paid and
 the LSP has a leg preimage that maps to the customer hold hash. If the customer never pays, the order

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import type { LinkageVerifier } from "@fiberlsp/protocol";
 import { selectLinkageVerifiers } from "@fiberlsp/server";
 
-const groth16: LinkageVerifier = { scheme: "groth16-dual-sha256-v1", verify: () => true };
-const exposedSecret: LinkageVerifier = { scheme: "exposed-secret-v1", verify: () => true };
+const groth16: LinkageVerifier = { scheme: "groth16-dual-sha256", verify: () => true };
+const exposedSecret: LinkageVerifier = { scheme: "exposed-secret", verify: () => true };
 
 test("a loaded Groth16 verifier alone is used and no warning is emitted", () => {
   const warns: string[] = [];

@@ -1,39 +1,40 @@
 /**
- * Domain-separated dual-sha256 linkage — trustless single-node JIT without blake2b circuits.
+ * Domain-separated dual-sha256 linkage — trustless single-node JIT without blake2b circuits, and
+ * settleable through a real FNN node.
  *
- * One FNN node cannot hold and pay the same payment_hash. Instead of two hash *algorithms* on one
- * preimage P (sha256 + ckb_blake2b), we use one algorithm (sha256) on two *domain-tagged* preimages
- * derived from a 32-byte secret S:
+ * FNN invoice preimages are a fixed 32-byte `Hash256` (payment_hash = sha256/blake2b of exactly 32 bytes), so
+ * every preimage here is kept to 32 bytes while preserving the linkage guarantee, using one algorithm
+ * (sha256) throughout:
  *
- *   P_hold = TAG_HOLD || S   →  A = sha256(P_hold)  (customer hold invoice)
- *   P_leg  = TAG_LEG  || S   →  B = sha256(P_leg)   (merchant leg invoice)
+ *   leg_preimage  = S                          →  B = sha256(S)                     (merchant leg invoice)
+ *   hold_preimage = sha256(TAG_HOLD || S)       →  A = sha256(hold_preimage)         (customer hold invoice)
  *
- * A ≠ B (different byte strings), so one node holds under A and pays under B with no collision. The
- * linkage statement for ZK is ∃S : sha256(TAG_HOLD||S)=A ∧ sha256(TAG_LEG||S)=B — two SHA-256 hashes
- * only (practical Groth16). At settlement the LSP learns P_leg from the forward and derives P_hold via
- * the public tag transform — no merchant reveal RPC required on the honest path.
+ * Both preimages are 32 bytes, so both invoices issue and settle on a real node. A ≠ B, so one node holds
+ * under A and pays under B with no collision. The leg preimage is S itself, so paying the leg reveals S and
+ * the LSP derives hold_preimage = sha256(TAG_HOLD||S) with no merchant reveal RPC on the honest path. The
+ * TAG_HOLD is essential: without it hold_preimage would be sha256(S) = the *public* leg hash B, letting
+ * anyone settle the customer hold. The ZK statement is ∃S : sha256(S)=B ∧ sha256(sha256(TAG_HOLD||S))=A —
+ * three SHA-256 blocks, still practical Groth16.
  */
 import { createHash } from "node:crypto";
 import type { LinkageProof, LinkageVerifier } from "./linkage.js";
 
-/** v1 domain tag prepended to S for the customer hold preimage. */
-export const JIT_LINK_HOLD_TAG = "LSPS-FIBER/JIT/HOLD/v1\0";
-/** v1 domain tag prepended to S for the merchant leg preimage. */
-export const JIT_LINK_LEG_TAG = "LSPS-FIBER/JIT/LEG/v1\0";
-/** Length of the random secret S (bytes). */
+/** Domain tag prepended to S for the customer hold preimage (hashed to 32 bytes). */
+export const JIT_LINK_HOLD_TAG = "LSPS-FIBER/JIT/HOLD\0";
+/** Length of the random secret S (bytes). It is also the leg preimage. */
 export const JIT_LINK_SECRET_BYTES = 32;
 
-export const EXPOSED_SECRET_SCHEME = "exposed-secret-v1";
-export const GROTH16_DUAL_SHA256_SCHEME = "groth16-dual-sha256-v1";
+export const EXPOSED_SECRET_SCHEME = "exposed-secret";
+export const GROTH16_DUAL_SHA256_SCHEME = "groth16-dual-sha256";
 
 export interface DualSha256Hashes {
-  /** sha256(TAG_HOLD || S) — hold invoice hash (customer pays). */
+  /** sha256(sha256(TAG_HOLD || S)) — hold invoice hash (customer pays). */
   hold: string;
-  /** sha256(TAG_LEG || S) — leg invoice hash (LSP forwards). */
+  /** sha256(S) — leg invoice hash (LSP forwards). */
   leg: string;
-  /** Tagged leg preimage (merchant issues invoice with this + hash_algorithm sha256). */
+  /** Leg preimage = S (32 bytes). Merchant issues the leg invoice with this + hash_algorithm sha256. */
   legPreimage: string;
-  /** Tagged hold preimage (LSP settles the hold with this). */
+  /** Hold preimage = sha256(TAG_HOLD || S) (32 bytes). LSP settles the hold with this. */
   holdPreimage: string;
 }
 
@@ -68,33 +69,29 @@ export function taggedPreimage(tag: string, secret: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Derive P_leg = TAG_LEG || S from secret bytes. */
+/** The leg preimage is S itself (32 bytes) — a live FNN node can settle with it directly. */
 export function deriveLegPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
     throw new Error(`JIT secret must be ${JIT_LINK_SECRET_BYTES} bytes`);
   }
-  return taggedPreimage(JIT_LINK_LEG_TAG, secret);
+  return secret.slice();
 }
 
-/** Derive P_hold = TAG_HOLD || S from secret bytes. */
+/** Derive the 32-byte hold preimage sha256(TAG_HOLD || S) from secret bytes. */
 export function deriveHoldPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
     throw new Error(`JIT secret must be ${JIT_LINK_SECRET_BYTES} bytes`);
   }
-  return taggedPreimage(JIT_LINK_HOLD_TAG, secret);
+  return toBytes(sha256Hex(taggedPreimage(JIT_LINK_HOLD_TAG, secret)));
 }
 
-/** Extract S from a leg preimage that follows the v1 tag convention; null if malformed. */
+/** The leg preimage is S directly; return it when it is a well-formed 32-byte value, else null. */
 export function extractSecretFromLegPreimage(legPreimage: Uint8Array): Uint8Array | null {
-  const tag = new TextEncoder().encode(JIT_LINK_LEG_TAG);
-  if (legPreimage.length !== tag.length + JIT_LINK_SECRET_BYTES) return null;
-  for (let i = 0; i < tag.length; i++) {
-    if (legPreimage[i] !== tag[i]) return null;
-  }
-  return legPreimage.slice(tag.length);
+  if (legPreimage.length !== JIT_LINK_SECRET_BYTES) return null;
+  return legPreimage.slice();
 }
 
-/** Derive P_hold from P_leg using the public v1 tag mapping. */
+/** Derive the hold preimage from the leg preimage (= S) using the public tag mapping. */
 export function deriveHoldPreimageFromLeg(legPreimageHex: string): string | null {
   const secret = extractSecretFromLegPreimage(toBytes(legPreimageHex));
   if (!secret) return null;
@@ -133,7 +130,7 @@ export function verifyDualSha256Linkage(
 }
 
 /**
- * Fraud proof when the leg preimage settles B but does not map to hold hash A under the v1 tags.
+ * Fraud proof when the leg preimage settles B but does not map to hold hash A under the domain tag.
  * Returns (A, B, leg_preimage) for bond slashing / audit.
  */
 export function fraudEvidenceDualSha256(

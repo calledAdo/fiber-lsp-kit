@@ -21,17 +21,21 @@ This is atomic from the payment perspective: deliver to the merchant or refund t
 
 One FNN node cannot safely hold `invoice(H)` and also send `payment(H)`. The node can mark its own invoice as
 paid and reject the held TLC. The shipped mechanism therefore uses two different SHA-256 hashes derived from
-one merchant secret:
+one merchant secret. Crucially, both invoice **preimages stay 32 bytes** — an FNN invoice preimage is a fixed
+`Hash256`, so the tagged value is hashed down rather than fed in raw:
 
 ```text
 S           = merchant-generated 32-byte secret
-hold_hash A = sha256("LSPS-FIBER/JIT/HOLD/v1\0" || S)
-leg_hash B  = sha256("LSPS-FIBER/JIT/LEG/v1\0"  || S)
+leg_hash  B = sha256(S)                              (leg invoice; preimage = S, 32 bytes)
+hold_hash A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
+                                                     (hold invoice; preimage = sha256(TAG||S), 32 bytes)
 ```
 
-The LSP verifies a proof that `A` and `B` come from the same hidden `S`. In production this proof is
-`groth16-dual-sha256-v1`. For local tests only, the repo also has `exposed-secret-v1`, which reveals `S` and
-must not be used as a production mode.
+Paying the leg reveals `S`; the LSP derives the hold preimage `sha256(TAG||S)` and settles the hold. The tag
+is essential — without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone settle
+the customer hold. The LSP verifies a proof that `A` and `B` come from the same hidden `S`. In production this
+proof is `groth16-dual-sha256`. For local tests only, the repo also has `exposed-secret`, which reveals
+`S` and must not be used as a production mode.
 
 ## Merchant SDK API
 
@@ -133,7 +137,7 @@ The REST order creation body is `CreateJitOrderRequest`:
   "hold_hash": "0x...",
   "leg_hash": "0x...",
   "merchant_invoice": "fibt...",
-  "linkage_proof": { "scheme": "groth16-dual-sha256-v1", "data": "{...}" },
+  "linkage_proof": { "scheme": "groth16-dual-sha256", "data": "{...}" },
   "amount": "300000000",
   "channel_capacity": "1000000000",
   "expiry_seconds": 1800,

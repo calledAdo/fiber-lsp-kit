@@ -2,10 +2,11 @@
  * Single-node JIT channels via linked hold/leg hashes.
  *
  * One Fiber node cannot safely hold invoice(H) and also pay a merchant invoice(H). The canonical JIT flow
- * therefore uses two SHA-256 hashes linked by one merchant secret:
+ * therefore uses two SHA-256 hashes linked by one merchant secret, with both invoice preimages kept to the
+ * 32 bytes a live FNN node accepts:
  *
- *   hold_hash = sha256(TAG_HOLD || S)  -- customer-facing hold invoice
- *   leg_hash  = sha256(TAG_LEG  || S)  -- merchant leg invoice paid after the channel opens
+ *   leg_hash  = sha256(S)                     -- merchant leg invoice; preimage is S (32 bytes)
+ *   hold_hash = sha256(sha256(TAG_HOLD || S)) -- customer hold invoice; preimage is sha256(TAG_HOLD||S)
  *
  * The LSP verifies a zero-knowledge linkage proof before committing capital. After the merchant leg settles,
  * the LSP learns the leg preimage, derives the hold preimage, and settles the held customer payment.
@@ -31,9 +32,9 @@ export interface CreateJitOrderRequest {
   target_address?: string;
   /** Channel asset (payment, fee and channel are all denominated in it). */
   asset: Asset;
-  /** sha256(TAG_HOLD || S) -- the customer-facing hold invoice hash. */
+  /** sha256(sha256(TAG_HOLD || S)) -- the customer-facing hold invoice hash. */
   hold_hash: string;
-  /** sha256(TAG_LEG || S) -- must equal the merchant leg invoice's payment_hash. */
+  /** sha256(S) -- must equal the merchant leg invoice's payment_hash (leg preimage is S). */
   leg_hash: string;
   /** The merchant's leg invoice: net amount, hash = leg_hash. */
   merchant_invoice: string;

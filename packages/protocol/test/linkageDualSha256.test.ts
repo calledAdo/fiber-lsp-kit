@@ -24,10 +24,13 @@ test("dualSha256: hold and leg hashes differ under domain tags", () => {
   assert.equal(deriveHoldPreimageFromLeg(legPreimage), holdPreimage);
 });
 
-test("verifyDualSha256Linkage accepts the leg preimage and rejects a wrong tag", () => {
+test("verifyDualSha256Linkage accepts the leg preimage (S) and rejects a mismatched secret", () => {
   const { hold, leg, legPreimage } = dualSha256(S);
+  assert.equal(legPreimage, S); // v2: the leg preimage is S itself (32 bytes, FNN-settleable)
   assert.equal(verifyDualSha256Linkage(legPreimage, hold, leg), true);
-  assert.equal(verifyDualSha256Linkage(S, hold, leg), false);
+  // a different secret's preimage settles neither the leg hash nor the derived hold hash
+  const other = dualSha256("0x" + "aa".repeat(JIT_LINK_SECRET_BYTES));
+  assert.equal(verifyDualSha256Linkage(other.legPreimage, hold, leg), false);
 });
 
 test("linked hash helpers reject malformed hex instead of coercing it", () => {
@@ -132,7 +135,7 @@ test("Groth16 verifier rejects malformed proof payloads without calling the veri
   });
   const publicSignals = [...hashToBitSignals(hold), ...hashToBitSignals(leg)];
 
-  assert.equal(await verifier.verify(hold, leg, { scheme: "groth16-dual-sha256-v1", data: "{" }), false);
+  assert.equal(await verifier.verify(hold, leg, { scheme: "groth16-dual-sha256", data: "{" }), false);
   assert.equal(
     await verifier.verify(
       hold,
