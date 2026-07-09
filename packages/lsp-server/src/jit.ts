@@ -53,6 +53,8 @@ export interface JitServiceConfig {
   sleep?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
   readyPollAttempts?: number;
+  /** Seconds reserved after the merchant-leg forward for the hold settle to land before expiry. Default 60. */
+  settleMarginSeconds?: number;
   deliverWebhook?: (url: string, order: JitOrder) => Promise<void>;
   onFraud?: (evidence: { a: string; b: string; preimage: string }, order: JitOrder) => void;
 }
@@ -77,10 +79,14 @@ export class JitService {
       | "sleep"
       | "pollIntervalMs"
       | "readyPollAttempts"
+      | "settleMarginSeconds"
     >
   > &
     JitServiceConfig;
   private readonly openLock: KeyedLock = makeKeyedLock();
+  // Serialize creation per leg hash so a concurrent duplicate cannot slip past assertNoDuplicate between
+  // the check and the store write (the leg invoice is each order's natural unique key).
+  private readonly createLock: KeyedLock = makeKeyedLock();
 
   constructor(config: JitServiceConfig) {
     this.cfg = {
@@ -92,6 +98,7 @@ export class JitService {
       sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
       pollIntervalMs: 2000,
       readyPollAttempts: 150,
+      settleMarginSeconds: 60,
       ...config,
     };
   }
@@ -108,6 +115,10 @@ export class JitService {
   }
 
   async createOrder(req: CreateJitOrderRequest): Promise<JitOrder> {
+    return this.createLock.run(req.leg_hash, () => this.createOrderLocked(req));
+  }
+
+  private async createOrderLocked(req: CreateJitOrderRequest): Promise<JitOrder> {
     const offering = this.offeringFor(req);
     const gross = asBig(req.amount);
     if (gross < asBig(this.cfg.terms.min_payment)) {
@@ -116,7 +127,12 @@ export class JitService {
     await this.verifyLinkage(req);
     this.assertNoDuplicate(req);
 
-    const forward = jitForwardAmount(this.cfg.terms, gross);
+    let forward: bigint;
+    try {
+      forward = jitForwardAmount(this.cfg.terms, gross);
+    } catch {
+      throw new JitError("fee_exceeds_amount", `payment ${gross} does not cover the JIT fee`);
+    }
     const fee = jitFee(this.cfg.terms, gross);
     const parsed = await this.cfg.rpc.parseInvoice(req.merchant_invoice);
     if (parsed.invoice?.data?.payment_hash !== req.leg_hash) {
@@ -127,7 +143,17 @@ export class JitService {
     }
 
     const capacity = this.channelCapacity(req, gross, forward, offering);
-    const expirySeconds = Math.max(1, Math.min(req.expiry_seconds ?? 600, this.cfg.terms.max_expiry_seconds));
+    // The hold must outlive an on-chain open + a merchant-leg forward + the settle, or the LSP could pay the
+    // merchant and then find the customer's hold already expired (refunded) — losing the forwarded amount.
+    const minExpiry = this.minExpirySeconds();
+    if (minExpiry > this.cfg.terms.max_expiry_seconds) {
+      throw new JitError(
+        "expiry_unsafe",
+        `channel-open budget needs a ${minExpiry}s hold but max_expiry_seconds is ${this.cfg.terms.max_expiry_seconds}`,
+      );
+    }
+    const requested = req.expiry_seconds ?? Math.max(600, minExpiry);
+    const expirySeconds = Math.min(Math.max(requested, minExpiry), this.cfg.terms.max_expiry_seconds);
 
     const hold = await this.cfg.rpc.newInvoice({
       amount: gross,
@@ -178,6 +204,11 @@ export class JitService {
       }
 
       if (rec.state === "forwarding") {
+        // Never pay the merchant into a hold that may expire before we can settle it. If capital is not yet
+        // committed (leg not paid/in-flight) and too little hold lifetime remains, refund instead.
+        if (this.holdTooCloseToExpiry(rec) && !(await this.merchantCommitted(rec))) {
+          return toWire(await this.refund(id, "insufficient hold lifetime remaining to safely pay the merchant"));
+        }
         const paid = await this.forward(id);
         if (!paid) return toWire(await this.refund(id, "forward to merchant failed"));
         return toWire(await this.trySettle(id));
@@ -256,6 +287,28 @@ export class JitService {
     }
   }
 
+  /** Worst-case seconds one on-chain open (or one merchant-leg forward) can consume before giving up. */
+  private openBudgetSeconds(): number {
+    return Math.ceil((this.cfg.readyPollAttempts * this.cfg.pollIntervalMs) / 1000);
+  }
+
+  /** Shortest hold the LSP can safely grant: an open, a forward, and a settle must all fit inside it. */
+  private minExpirySeconds(): number {
+    return 2 * this.openBudgetSeconds() + this.cfg.settleMarginSeconds;
+  }
+
+  /** True when too little of the hold's lifetime remains to forward and still settle before it expires. */
+  private holdTooCloseToExpiry(rec: JitOrderRecord): boolean {
+    const reserve = this.openBudgetSeconds() + this.cfg.settleMarginSeconds;
+    return this.cfg.now() + reserve >= rec.expires_at;
+  }
+
+  /** True once the merchant leg is already paid or in flight — capital is committed; never refund past this. */
+  private async merchantCommitted(rec: JitOrderRecord): Promise<boolean> {
+    const s = (await this.cfg.rpc.getPayment(rec.request.leg_hash).catch(() => undefined))?.status;
+    return s === "Success" || s === "Inflight";
+  }
+
   private async trySettle(id: string): Promise<JitOrderRecord> {
     let rec = this.require(id);
     if (rec.state === "settled") return rec;
@@ -268,7 +321,14 @@ export class JitService {
         this.cfg.store.put(rec);
       }
     }
-    if (!rec.preimage) return rec;
+    if (!rec.preimage) {
+      // The merchant leg is paid but get_payment has not surfaced the preimage yet. The hold stays held and
+      // safe; settlement waits for the merchant's reveal. Surface it so the operator sees the open exposure.
+      console.warn(
+        `[jit] order ${rec.jit_order_id}: leg paid but preimage unavailable from get_payment; awaiting merchant reveal to settle`,
+      );
+      return rec;
+    }
 
     const holdPreimage = this.holdPreimageForSettle(rec, rec.preimage);
     if (!holdPreimage) {

@@ -12,4 +12,5 @@ export { createMerchantApi } from "./merchantApi.js";
 export { JitService, JitError, type JitServiceConfig } from "./jit.js";
 export { MemoryJitStore, FileJitStore, type JitStore, type JitOrderRecord } from "./jitStore.js";
 export { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
+export { selectLinkageVerifiers, type SelectLinkageVerifiersOptions } from "./linkageConfig.js";
 export { MemoryWatchStore, FileWatchStore, type WatchStore, type InvoiceWatch } from "./watchStore.js";

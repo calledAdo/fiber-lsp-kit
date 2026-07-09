@@ -233,6 +233,34 @@ test("createOrder rejects duplicate active hold, leg, or merchant invoice", asyn
   await assert.rejects(svc.createOrder(req()), (e: JitError) => e.code === "duplicate_order");
 });
 
+test("createOrder rejects (as a 4xx JitError) when the fee exceeds the payment", async () => {
+  const node = makeNode();
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms: { ...terms, fee_base: "100000000", min_payment: "1" }, // flat fee >= the payment
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    sleep: async () => {},
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  await assert.rejects(
+    svc.createOrder(req({ amount: "100000000" })),
+    (e: JitError) => e.code === "fee_exceeds_amount",
+  );
+  assert.ok(!node.calls.includes("new_invoice"), "no hold minted when the fee swallows the payment");
+});
+
+test("concurrent creates with the same leg hash cannot both pass the duplicate guard", async () => {
+  const { svc } = makeService();
+  const results = await Promise.allSettled([svc.createOrder(req()), svc.createOrder(req())]);
+  const fulfilled = results.filter((r) => r.status === "fulfilled");
+  const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+  assert.equal(fulfilled.length, 1, "exactly one create wins");
+  assert.equal(rejected.length, 1, "the concurrent duplicate is refused");
+  assert.equal((rejected[0].reason as JitError).code, "duplicate_order");
+});
+
 test("order read and controls require the per-order bearer token", async () => {
   const { svc } = makeService();
   const order = await svc.createOrder(req());
@@ -279,4 +307,71 @@ test("REST API uses canonical JIT route with bearer auth and no linked alias", a
 
   const linkedAlias = await api("POST", "/lsp/v1/jit/linked/orders", req());
   assert.equal(linkedAlias.status, 404);
+});
+
+test("createOrder bumps a too-short hold to cover the open+forward+settle budget", async () => {
+  const node = makeNode();
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    // open budget = ceil(3 * 1000 / 1000) = 3s; minExpiry = 2*3 + 10 = 16s
+    pollIntervalMs: 1000,
+    readyPollAttempts: 3,
+    settleMarginSeconds: 10,
+    sleep: async () => {},
+    now: () => 1_000,
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  // Merchant asks for a reckless 2s hold; the LSP must widen it to the 16s safety floor.
+  const order = await svc.createOrder(req({ expiry_seconds: 2 }));
+  assert.equal(order.expires_at - order.created_at, 16);
+});
+
+test("createOrder refuses when the safe hold cannot fit inside max_expiry_seconds", async () => {
+  const node = makeNode();
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    // max_expiry 100s is smaller than the minExpiry the open budget demands
+    terms: { ...terms, max_expiry_seconds: 100 },
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    pollIntervalMs: 1000,
+    readyPollAttempts: 100, // open budget 100s → minExpiry = 210s > 100s
+    settleMarginSeconds: 10,
+    sleep: async () => {},
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  await assert.rejects(svc.createOrder(req()), (e: JitError) => e.code === "expiry_unsafe");
+  assert.ok(!node.calls.includes("new_invoice"), "no hold minted when no safe expiry exists");
+});
+
+test("run refunds instead of paying the merchant when the hold is about to expire", async () => {
+  const node = makeNode();
+  let clock = 1_000;
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    pollIntervalMs: 0,
+    readyPollAttempts: 3,
+    settleMarginSeconds: 60,
+    sleep: async () => {},
+    now: () => clock,
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  // hold created at t=1000 for 600s → expires_at 1600; reserve = 0 + 60 = 60
+  const order = await svc.createOrder(req({ expiry_seconds: 600 }));
+  // jump to t=1560 so now+reserve (1620) >= expires_at (1600): too close to safely forward
+  clock = 1_560;
+  const done = await svc.run(order.jit_order_id);
+  assert.equal(done.state, "refunded");
+  assert.match(done.failure_reason ?? "", /hold lifetime/);
+  assert.equal(node.captured.sentInvoice, "", "merchant leg was never paid");
+  assert.equal(node.captured.cancelled, linked.hold, "hold was cancelled so the payer is refunded");
 });

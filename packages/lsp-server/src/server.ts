@@ -15,6 +15,7 @@
  *   LINKED_JIT_VK_PATH — Groth16 verification key for single-node linked JIT. When set, JIT channels are
  *                        offered at `/lsp/v1/jit/*`.
  *   JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1 — test-only linked proof mode that reveals the merchant secret.
+ *                        Startup fails if this is set together with LINKED_JIT_VK_PATH (no silent downgrade).
  *   JIT_STORE_PATH    — persist JIT orders + revealed preimages (survives restart); unset ⇒ in-memory.
  *   JIT_FEE_BPS / JIT_FEE_BASE / JIT_MIN_PAYMENT / JIT_MAX_EXPIRY — pricing (defaults below).
  *
@@ -23,7 +24,7 @@
  */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { udtAsset, CKB, type AssetOffering } from "@fiberlsp/protocol";
+import { udtAsset, CKB, type AssetOffering, type LinkageVerifier } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { Lsp, makeInvoiceFeeVerifier } from "./lsp.js";
 import { createApi } from "./api.js";
@@ -33,6 +34,7 @@ import { createMerchantApi } from "./merchantApi.js";
 import { FileWatchStore } from "./watchStore.js";
 import { JitService } from "./jit.js";
 import { FileJitStore } from "./jitStore.js";
+import { selectLinkageVerifiers } from "./linkageConfig.js";
 import {
   compositeLinkageVerifier,
   createGroth16DualSha256Verifier,
@@ -114,7 +116,8 @@ async function main() {
     ...(process.env.READY_POLL_INTERVAL_MS ? { readyPollIntervalMs: Number(process.env.READY_POLL_INTERVAL_MS) } : {}),
   });
   let jit: JitService | undefined;
-  const verifiers = [];
+  // Resolve the Groth16 verifier (all IO here); the pure selectLinkageVerifiers() decides what actually runs.
+  let groth16: LinkageVerifier | undefined;
   const vkPath = process.env.LINKED_JIT_VK_PATH;
   if (vkPath) {
     try {
@@ -122,20 +125,19 @@ async function main() {
       const snarkjs = (await import("snarkjs" as string)) as {
         groth16: { verify: (vk: unknown, pub: string[], proof: unknown) => Promise<boolean> };
       };
-      verifiers.push(
-        createGroth16DualSha256Verifier({
-          verificationKey: vk,
-          verifyGroth16: (v, pub, proof) => snarkjs.groth16.verify(v, pub, proof),
-        }),
-      );
+      groth16 = createGroth16DualSha256Verifier({
+        verificationKey: vk,
+        verifyGroth16: (v, pub, proof) => snarkjs.groth16.verify(v, pub, proof),
+      });
     } catch (e) {
       console.warn(`[jit] could not load Groth16 vk from ${vkPath}: ${e}`);
     }
   }
-  if (process.env.JIT_ALLOW_UNSAFE_EXPOSED_SECRET === "1") {
-    console.warn("[jit] enabling unsafe exposed-secret linkage verifier; use only for local tests");
-    verifiers.push(exposedSecretVerifier);
-  }
+  const verifiers = selectLinkageVerifiers({
+    groth16,
+    allowExposedSecret: process.env.JIT_ALLOW_UNSAFE_EXPOSED_SECRET === "1",
+    exposedSecret: exposedSecretVerifier,
+  });
   if (verifiers.length > 0) {
     jit = new JitService({
       rpc,
