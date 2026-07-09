@@ -97,11 +97,14 @@ export class JitCheckout {
     const linked = dualSha256(secret);
     const net = jitForwardAmount(terms, req.amount);
 
+    // The leg must outlive the LSP hold (which the LSP may set up to terms.max_expiry_seconds), or it could
+    // expire before the LSP forwards. Give it max_expiry plus slack for the on-chain open, never less.
+    const legExpiry = Math.max(req.expirySeconds ?? 0, terms.max_expiry_seconds) + 1800;
     const legInv = await this.cfg.rpc.newInvoice({
       amount: net,
       description: req.description ?? "jit checkout (merchant leg)",
       udtTypeScript: assetUdtScript(req.asset),
-      expirySeconds: req.expirySeconds ?? 3600,
+      expirySeconds: legExpiry,
       paymentPreimage: linked.legPreimage,
       hashAlgorithm: "sha256",
     });

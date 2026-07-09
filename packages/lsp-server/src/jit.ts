@@ -19,7 +19,12 @@ import {
   jitFee,
   verifyDualSha256Linkage,
 } from "@fiberlsp/protocol";
-import { openChannelAndAwait, type FiberChannelRpcClient } from "@fiberlsp/fiber";
+import {
+  invoiceExpirySeconds,
+  openChannelAndAwait,
+  receivedTlcExpirySeconds,
+  type FiberChannelRpcClient,
+} from "@fiberlsp/fiber";
 import { MemoryJitStore, type JitOrderRecord, type JitStore } from "./jitStore.js";
 import { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
 
@@ -152,6 +157,18 @@ export class JitService {
     const requested = req.expiry_seconds ?? Math.max(600, minExpiry);
     const expirySeconds = Math.min(Math.max(requested, minExpiry), this.cfg.terms.max_expiry_seconds);
 
+    // The merchant leg must outlive the hold, or it can expire before the LSP forwards — a doomed order that
+    // still wastes an on-chain open. Reject up front when the leg invoice's absolute expiry is too short.
+    const now = this.cfg.now();
+    const holdExpiresAt = now + expirySeconds;
+    const legExpiresAt = invoiceExpirySeconds(parsed);
+    if (legExpiresAt !== undefined && legExpiresAt < holdExpiresAt) {
+      throw new JitError(
+        "leg_expiry_too_short",
+        `merchant_invoice expires at ${legExpiresAt} but must outlive the hold (${holdExpiresAt})`,
+      );
+    }
+
     const hold = await this.cfg.rpc.newInvoice({
       amount: gross,
       description: "JIT channel order (hold)",
@@ -162,7 +179,6 @@ export class JitService {
     });
 
     const { linkage_proof: _proof, ...wireReq } = req;
-    const now = this.cfg.now();
     const rec: JitOrderRecord = {
       jit_order_id: this.cfg.idgen(),
       state: "created",
@@ -176,7 +192,7 @@ export class JitService {
       hold_invoice: hold.invoice_address,
       forward_amount: forward.toString(10),
       fee: fee.toString(10),
-      expires_at: now + expirySeconds,
+      expires_at: holdExpiresAt,
       created_at: now,
       order_token: this.cfg.tokenGenerator(),
     };
@@ -202,18 +218,33 @@ export class JitService {
 
       if (rec.state === "forwarding") {
         // Never pay the merchant into a hold that may expire before we can settle it. If capital is not yet
-        // committed (leg not paid/in-flight) and too little hold lifetime remains, refund instead.
-        if (this.holdTooCloseToExpiry(rec) && !(await this.merchantCommitted(rec))) {
+        // committed (leg not paid/in-flight) and too little lifetime remains, refund instead.
+        const deadline = await this.effectiveHoldDeadline(rec);
+        if (this.tooCloseToDeadline(deadline) && !(await this.merchantCommitted(rec))) {
           return toWire(await this.refund(id, "insufficient hold lifetime remaining to safely pay the merchant"));
         }
         const paid = await this.forward(id);
         if (!paid) return toWire(await this.refund(id, "forward to merchant failed"));
-        return toWire(await this.trySettle(id));
+        return toWire(await this.settleWithRetry(id));
       }
 
       return toWire(rec);
     } catch (e) {
       return toWire(await this.refund(id, e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Re-drive every non-terminal order after a restart. `run()` resumes from each order's persisted state, so
+   * an order caught mid-flight — including one already `forwarding` (merchant paid) — is settled from the
+   * persisted or re-derivable preimage instead of being stranded until the hold expires. Call once on boot.
+   */
+  resume(): void {
+    for (const rec of this.cfg.store.all()) {
+      if (rec.state === "settled" || rec.state === "refunded" || rec.state === "expired") continue;
+      void this.run(rec.jit_order_id).catch((e) => {
+        console.warn(`[jit] resume(${rec.jit_order_id}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
     }
   }
 
@@ -294,16 +325,47 @@ export class JitService {
     return 2 * this.openBudgetSeconds() + this.cfg.settleMarginSeconds;
   }
 
-  /** True when too little of the hold's lifetime remains to forward and still settle before it expires. */
-  private holdTooCloseToExpiry(rec: JitOrderRecord): boolean {
+  /**
+   * The hold's effective deadline (unix seconds): the invoice expiry, tightened to the held payment's actual
+   * on-chain TLC expiry when the node reports it. The TLC expiry is the hard ceiling — holding past it lets
+   * the customer force-close and reclaim — so we never rely on the invoice expiry alone when we can read it.
+   */
+  private async effectiveHoldDeadline(rec: JitOrderRecord): Promise<number> {
+    let deadline = rec.expires_at;
+    try {
+      const tlc = receivedTlcExpirySeconds(await this.cfg.rpc.listChannels(), rec.request.hold_hash);
+      if (tlc !== undefined) deadline = Math.min(deadline, tlc);
+    } catch {
+      /* fall back to the invoice expiry */
+    }
+    return deadline;
+  }
+
+  /** True when too little time remains before `deadline` to forward and still settle. */
+  private tooCloseToDeadline(deadline: number): boolean {
     const reserve = this.openBudgetSeconds() + this.cfg.settleMarginSeconds;
-    return this.cfg.now() + reserve >= rec.expires_at;
+    return this.cfg.now() + reserve >= deadline;
   }
 
   /** True once the merchant leg is already paid or in flight — capital is committed; never refund past this. */
   private async merchantCommitted(rec: JitOrderRecord): Promise<boolean> {
     const s = (await this.cfg.rpc.getPayment(rec.request.leg_hash).catch(() => undefined))?.status;
     return s === "Success" || s === "Inflight";
+  }
+
+  /**
+   * Retry settlement until it lands, the order becomes terminal, or the hold nears expiry. The leg preimage
+   * can lag the payment's `Success` status by a moment, and a single attempt would strand the order (and the
+   * LSP's forwarded funds) in `forwarding`. Bounded by the ready-poll budget and the hold deadline.
+   */
+  private async settleWithRetry(id: string): Promise<JitOrderRecord> {
+    for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
+      const rec = await this.trySettle(id);
+      if (rec.state !== "forwarding") return rec; // settled / refunded / expired
+      if (this.cfg.now() + this.cfg.settleMarginSeconds >= rec.expires_at) return rec; // hold near expiry; stop
+      if (i < this.cfg.readyPollAttempts - 1) await this.cfg.sleep(this.cfg.pollIntervalMs);
+    }
+    return this.require(id);
   }
 
   private async trySettle(id: string): Promise<JitOrderRecord> {

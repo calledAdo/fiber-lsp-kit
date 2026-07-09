@@ -11,7 +11,7 @@ import {
   type JitTerms,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient, type FetchLike } from "@fiberlsp/fiber";
-import { createApi, JitError, JitService, Lsp } from "@fiberlsp/server";
+import { createApi, JitError, JitService, Lsp, MemoryJitStore } from "@fiberlsp/server";
 
 const RUSD = udtAsset(
   {
@@ -55,6 +55,9 @@ function makeNode(
     paymentPreimage?: string;
     paymentStatuses?: string[];
     holdStatuses?: string[];
+    legTimestamp?: string; // hex ms
+    legExpirySec?: string; // hex seconds
+    tlcExpiryMsHex?: string; // hex ms; adds a pending_tlc for linked.hold on the opened channel
   } = {},
 ) {
   let opened = false;
@@ -86,7 +89,11 @@ function makeNode(
         result = {
           invoice: {
             amount: over.legAmount ?? "99000000",
-            data: { payment_hash: over.legHash ?? linked.leg },
+            data: {
+              payment_hash: over.legHash ?? linked.leg,
+              ...(over.legTimestamp ? { timestamp: over.legTimestamp } : {}),
+              ...(over.legExpirySec ? { attrs: [{ expiry_time: over.legExpirySec }] } : {}),
+            },
           },
         };
         break;
@@ -113,6 +120,9 @@ function makeNode(
                   state: { state_name: "ChannelReady" },
                   local_balance: captured.openedFunding,
                   remote_balance: "0x0",
+                  ...(over.tlcExpiryMsHex
+                    ? { pending_tlcs: [{ payment_hash: linked.hold, expiry: over.tlcExpiryMsHex }] }
+                    : {}),
                   enabled: true,
                 },
               ]
@@ -249,6 +259,75 @@ test("createOrder rejects (as a 4xx JitError) when the fee exceeds the payment",
     (e: JitError) => e.code === "fee_exceeds_amount",
   );
   assert.ok(!node.calls.includes("new_invoice"), "no hold minted when the fee swallows the payment");
+});
+
+test("createOrder rejects a leg invoice that expires before the hold", async () => {
+  const nowSec = 1_000_000;
+  const node = makeNode({
+    legTimestamp: "0x" + (BigInt(nowSec) * 1000n).toString(16), // leg created "now"
+    legExpirySec: "0xa", // valid only 10s → expires long before the ~600s hold
+  });
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    pollIntervalMs: 0,
+    readyPollAttempts: 3,
+    sleep: async () => {},
+    now: () => nowSec,
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  await assert.rejects(svc.createOrder(req()), (e: JitError) => e.code === "leg_expiry_too_short");
+});
+
+test("run refunds when the on-chain TLC expiry is too close, even though the invoice expiry is not", async () => {
+  const nowSec = 1_000_000;
+  const node = makeNode({ tlcExpiryMsHex: "0x" + (BigInt(nowSec + 30) * 1000n).toString(16) }); // TLC dies in 30s
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    pollIntervalMs: 0,
+    readyPollAttempts: 3,
+    settleMarginSeconds: 60, // reserve 60s > 30s remaining on the TLC → too close
+    sleep: async () => {},
+    now: () => nowSec,
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  const order = await svc.createOrder(req({ expiry_seconds: 600 })); // hold expiry far away (nowSec+600)
+  const done = await svc.run(order.jit_order_id);
+  assert.equal(done.state, "refunded"); // the TLC ceiling, not the invoice, forced the refund
+  assert.equal(node.captured.sentInvoice, "", "merchant leg never paid");
+});
+
+test("resume() re-drives a forwarding order to settlement (crash recovery)", async () => {
+  const node = makeNode({ paymentStatuses: ["Success"] });
+  const store = new MemoryJitStore();
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    store,
+    pollIntervalMs: 0,
+    readyPollAttempts: 3,
+    sleep: async () => {},
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  const order = await svc.createOrder(req());
+  // simulate a crash after the channel opened and the merchant was paid — order left in "forwarding"
+  store.put({ ...store.get(order.jit_order_id)!, state: "forwarding", channel_outpoint: "0xout" });
+
+  svc.resume();
+  await new Promise((r) => setTimeout(r, 20)); // let the background re-driven run() finish
+
+  assert.equal(svc.getOrder(order.jit_order_id, "tok_1")!.state, "settled");
+  assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
 });
 
 test("JIT fee is pluggable via feeFor (pricing is policy, not mechanism)", async () => {

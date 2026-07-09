@@ -97,6 +97,24 @@ The detailed mechanism is in [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md). The short v
 This gives atomic JIT semantics at checkout latency. It is not sub-second LSPS2-style interception, because
 FNN does not yet expose the required HTLC interception and zero-conf channel hooks.
 
+### JIT timing and expiries
+
+The only way the LSP can lose money is to pay the merchant leg and then fail to settle the customer hold, so
+every timer is checked against the actual money-flow, not assumed:
+
+- **Hold vs open budget.** `createOrder` refuses a hold shorter than one open + one forward + a settle margin,
+  and `run()` refuses to pay the merchant when too little hold lifetime remains — it refunds instead.
+- **On-chain TLC ceiling (read, not assumed).** The invoice expiry is a soft timer; the held payment's TLC has
+  a hard on-chain expiry past which the customer can force-close and reclaim. Before forwarding, the LSP reads
+  the real TLC expiry from `list_channels` → `pending_tlcs[].expiry` (matched by hold hash) and uses
+  `min(invoice_expiry, tlc_expiry)` as the effective deadline. No configured guess about cltv is needed.
+- **Leg outlives the hold.** The merchant leg invoice must not expire before the LSP forwards. The client sets
+  the leg expiry above the hold window, and `createOrder` validates the leg's absolute expiry (from
+  `parse_invoice` `timestamp` + `expiry_time`) and rejects `leg_expiry_too_short`.
+- **Durable, retrying settle.** The leg preimage can lag the payment's `Success`; settlement is retried until
+  it lands or the hold nears expiry, and `JitService.resume()` re-drives any order left in flight by a crash
+  (including one already `forwarding`), so a restart between forward and settle recovers instead of stranding.
+
 ## Composition Model (Lego Bricks)
 
 The two flows above are *compositions*, not the only supported paths. The client SDK is built as independent

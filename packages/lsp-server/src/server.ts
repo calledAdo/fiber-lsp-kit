@@ -161,6 +161,7 @@ async function main() {
   } else {
     console.warn("[jit] disabled: set LINKED_JIT_VK_PATH or JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1");
   }
+  jit?.resume(); // re-drive any JIT order left in flight by a previous run (settle a mid-forward crash)
   const handle = createApi(lsp, { ...(jit ? { jit } : {}) });
 
   // Optional merchant invoice-webhook API, mounted only when a merchant node is configured. It watches

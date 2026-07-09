@@ -29,6 +29,16 @@ export interface RawPeer {
 }
 
 /** A channel as returned by list_channels (fields the LSP cares about). */
+/** A pending TLC (HTLC) on a channel, as returned in `list_channels` → `pending_tlcs`. */
+export interface RawHtlc {
+  id?: string;
+  amount?: string; // hex u128
+  payment_hash: string;
+  /** Absolute on-chain expiry of this TLC, hex u64 **milliseconds** since epoch. */
+  expiry: string;
+  status?: unknown;
+}
+
 export interface RawChannel {
   channel_id: string;
   channel_outpoint?: string | null;
@@ -37,6 +47,8 @@ export interface RawChannel {
   state: { state_name: string; state_flags?: unknown };
   local_balance: string; // hex u128
   remote_balance: string; // hex u128
+  /** In-flight TLCs on this channel (present in FNN list_channels; may be omitted by older nodes). */
+  pending_tlcs?: RawHtlc[];
   enabled: boolean;
 }
 
@@ -260,7 +272,16 @@ export class FiberChannelRpcClient {
    * invoice (hash and amount must match the order) before issuing the hold invoice.
    */
   parseInvoice(invoice: string): Promise<{
-    invoice: { amount?: string; data?: { payment_hash?: string; attrs?: unknown[] } };
+    invoice: {
+      amount?: string;
+      data?: {
+        payment_hash?: string;
+        /** Invoice creation time, hex u128 **milliseconds** since epoch. */
+        timestamp?: string;
+        /** Externally-tagged attrs, e.g. `{ "expiry_time": "0xe10" }` (seconds), `{ "description": "…" }`. */
+        attrs?: Array<Record<string, unknown>>;
+      };
+    };
   }> {
     return this.call("parse_invoice", [{ invoice }]);
   }
