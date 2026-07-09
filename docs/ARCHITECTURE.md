@@ -97,6 +97,43 @@ The detailed mechanism is in [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md). The short v
 This gives atomic JIT semantics at checkout latency. It is not sub-second LSPS2-style interception, because
 FNN does not yet expose the required HTLC interception and zero-conf channel hooks.
 
+## Composition Model (Lego Bricks)
+
+The two flows above are *compositions*, not the only supported paths. The client SDK is built as independent
+bricks that an integrator takes and wires as needed — nothing forces a fixed "check inbound, then purchase,
+then issue" sequence, and JIT is a swappable strategy rather than a separate silo.
+
+**Receiver bricks** (each exported and usable on its own):
+
+- `InvoiceService` — decomposed on purpose: `checkReceiveReadiness()`, `issue()` (issues with **no** readiness
+  gate), `receive()` (gate → optional provision → issue), `waitForPayment()`. Use whichever steps you want.
+- `buyInboundFromLsp` — provisioning as an injectable hook (`ensureInbound`), never hardcoded.
+- `PaymentWatcher`, `SettlementLedger`, `LiquidityMonitor`, `StreamingLease` — settlement, bookkeeping,
+  monitoring, and rent as separate pieces.
+- `MerchantCheckout` — an **optional** convenience composer (`createIntent` / `awaitSettlement` / `checkout`),
+  not a required entrypoint.
+
+**Choosing how you become able to receive.** The three mechanisms share one interface, `ReceiveStrategy`, so
+they are interchangeable:
+
+| Strategy | How inbound is obtained | Customer pays |
+| --- | --- | --- |
+| `DirectReceive` (have) | already have inbound | a normal invoice on the merchant node |
+| `DirectReceive` + `ensureInbound` (buy) | bought from an LSP first | a normal invoice on the merchant node |
+| `JitReceive` | channel opens on the paying tx | the LSP hold invoice |
+| `autoStrategy({ direct, jit, decide })` | picked per request from readiness | depends on the pick |
+
+`ReceiveStrategy.originate(req)` returns a uniform `ReceiveHandle` (payable invoice + `awaitSettlement()` →
+`Receipt`), so callers never branch on the mechanism. `autoStrategy`'s default policy receives directly when
+inbound already covers the amount and opens JIT only when short; override `decide` for any policy.
+`MerchantCheckout` accepts an optional `strategy`, so the same composer drives have / buy / JIT / auto — and
+falls back to the built-in issue-over-inbound path when no strategy is set.
+
+**Server bricks.** The LSP engine is equally unopinionated: stores are dependency-injected (`MemoryOrderStore`
+/ `FileOrderStore`, JIT and watch stores likewise), and the JIT linkage backend is selected through
+`selectLinkageVerifiers()` (Groth16, or the test-only exposed-secret path, never both). A provider swaps any
+brick — persistence, pricing, proof backend — without forking the flow.
+
 ## What Is Working
 
 - Offline demo: `npm run demo` exercises the real SDK/server/ledger path over scripted FNN transports.
@@ -104,6 +141,8 @@ FNN does not yet expose the required HTLC interception and zero-conf channel hoo
   ledger export, and streaming rent against real testnet nodes.
 - Static console: `apps/demo-console` can be hosted without a backend for judges.
 - JIT service and SDK: implemented and tested with the single-node linked-hash mechanism.
+- Composable receive strategies: `DirectReceive` / `JitReceive` / `autoStrategy` behind one `ReceiveStrategy`
+  interface, selectable in `MerchantCheckout` — the have / buy / JIT choice is composition, not a fixed flow.
 - ZK verifier interface: implemented for Groth16 public-signal verification; generated proving artifacts are
   not committed.
 

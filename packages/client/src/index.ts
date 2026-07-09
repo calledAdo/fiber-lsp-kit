@@ -93,3 +93,13 @@ export {
   type JitCheckoutRequest,
   type JitCheckoutSession,
 } from "./JitCheckout.js";
+export {
+  DirectReceive,
+  JitReceive,
+  type ReceiveStrategy,
+  type ReceiveHandle,
+  type OriginateRequest,
+  type DirectReceiveConfig,
+  type JitReceiveConfig,
+} from "./ReceiveStrategy.js";
+export { autoStrategy, type AutoStrategyConfig } from "./autoStrategy.js";

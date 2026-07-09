@@ -14,6 +14,7 @@
 import type { Asset, Receipt } from "@fiberlsp/protocol";
 import type { InvoiceService, IssuedInvoice, ReceiveReadiness } from "./InvoiceService.js";
 import { PaymentWatcher, type WatchOptions, type WebhookPoster } from "./PaymentWatcher.js";
+import type { ReceiveHandle, ReceiveStrategy } from "./ReceiveStrategy.js";
 
 export interface PaymentIntent {
   intent_id: string;
@@ -53,6 +54,12 @@ export interface MerchantCheckoutConfig {
   invoices: InvoiceService;
   /** Default inbound provisioner used when a request doesn't supply its own. */
   ensureInbound?: (readiness: ReceiveReadiness) => Promise<void>;
+  /**
+   * Optional receive strategy (DirectReceive / JitReceive / autoStrategy). When set, origination and
+   * settlement are delegated to it, so the merchant chooses the mechanism (have / buy / JIT / auto) rather
+   * than being locked to the built-in issue-over-inbound path. When unset, the built-in path is used.
+   */
+  strategy?: ReceiveStrategy;
   /** Default webhook URL for settlement events; a `settle`/`checkout` call can override it. */
   webhookUrl?: string;
   /** Override webhook delivery (tests, signing/headers). */
@@ -68,14 +75,19 @@ function defaultId(): string {
 export class MerchantCheckout {
   private readonly invoices: InvoiceService;
   private readonly ensureInbound?: (readiness: ReceiveReadiness) => Promise<void>;
+  private readonly strategy?: ReceiveStrategy;
   private readonly webhookUrl?: string;
   private readonly watcher: PaymentWatcher;
   private readonly now: () => number;
   private readonly idgen: () => string;
+  // Live handles for strategy-originated intents, so awaitSettlement can drive the same session that
+  // originated (the JIT session holds the merchant secret and cannot be rebuilt from the intent alone).
+  private readonly pending = new Map<string, ReceiveHandle>();
 
   constructor(cfg: MerchantCheckoutConfig) {
     this.invoices = cfg.invoices;
     this.ensureInbound = cfg.ensureInbound;
+    this.strategy = cfg.strategy;
     this.webhookUrl = cfg.webhookUrl;
     this.now = cfg.now ?? (() => Math.floor(Date.now() / 1000));
     this.idgen = cfg.idgen ?? defaultId;
@@ -90,8 +102,10 @@ export class MerchantCheckout {
   /**
    * Gate readiness → provision inbound if short → issue the invoice → return a PaymentIntent. Throws
    * `ReceiveNotReadyError` if inbound is short and no provisioner (request or instance default) is set.
+   * When a receive `strategy` is configured, origination is delegated to it instead (have / buy / JIT / auto).
    */
   async createIntent(req: CheckoutRequest): Promise<PaymentIntent> {
+    if (this.strategy) return this.createIntentViaStrategy(req);
     const issued = await this.invoices.receive({
       asset: req.asset,
       amount: req.amount,
@@ -115,11 +129,51 @@ export class MerchantCheckout {
     };
   }
 
+  private async createIntentViaStrategy(req: CheckoutRequest): Promise<PaymentIntent> {
+    const handle = await this.strategy!.originate({
+      asset: req.asset,
+      amount: req.amount,
+      description: req.description,
+      expirySeconds: req.expirySeconds,
+      currency: req.currency,
+      metadata: req.metadata,
+      webhookUrl: this.webhookUrl,
+    });
+    const intent_id = this.idgen();
+    this.pending.set(intent_id, handle);
+    return {
+      intent_id,
+      invoice: handle.invoice,
+      payment_hash: handle.payment_hash,
+      asset: handle.asset,
+      amount: handle.amount,
+      description: req.description,
+      qr_payload: handle.invoice,
+      created_at: this.now(),
+      expires_at: handle.expires_at,
+      metadata: req.metadata,
+    };
+  }
+
   /**
    * Wait for a previously-created intent to settle and produce a Receipt, firing an invoice webhook. The
    * intent's description/metadata are folded onto the receipt; `webhookUrl` falls back to the instance's.
    */
   async awaitSettlement(intent: PaymentIntent, opts: WatchOptions = {}): Promise<Receipt> {
+    const handle = this.pending.get(intent.intent_id);
+    if (handle) {
+      this.pending.delete(intent.intent_id);
+      return handle.awaitSettlement({
+        ...opts,
+        webhookUrl: opts.webhookUrl ?? this.webhookUrl,
+        receipt: {
+          description: intent.description,
+          metadata: intent.metadata,
+          issued_at: intent.created_at,
+          ...opts.receipt,
+        },
+      });
+    }
     const issued: IssuedInvoice = {
       invoice: intent.invoice,
       paymentHash: intent.payment_hash,
