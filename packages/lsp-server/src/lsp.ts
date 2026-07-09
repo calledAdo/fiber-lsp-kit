@@ -15,19 +15,16 @@ import {
   type FeeMode,
   type LiquiditySnapshot,
   type LspInfo,
+  type FeeQuote,
   type Order,
   type OrderPayment,
-  type UdtTypeScript,
   quoteFee,
   validateOrder,
   asBig,
   assetEquals,
-  assetUdtScript,
   canonicalAssetId,
-  udtAsset,
-  CKB,
 } from "@fiberlsp/protocol";
-import { isChannelReady, type FiberChannelRpcClient, type RawChannel } from "@fiberlsp/fiber";
+import { channelAsset, isChannelReady, openChannelAndAwait, type FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { MemoryOrderStore, type OrderStore } from "./orderStore.js";
 
 export class OrderError extends Error {
@@ -57,6 +54,11 @@ export interface LspConfig {
   readyPollAttempts?: number;
   readyPollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Pricing policy: quote the fee for an order. Defaults to the offering's static `fee_schedule` via
+   * `quoteFee`. Inject to implement dynamic / per-client / surge pricing — it is policy, not mechanism.
+   */
+  feeQuote?: (offering: AssetOffering, req: CreateOrderRequest) => FeeQuote;
   /**
    * For prepaid orders: confirm the fee invoice actually settled before opening the channel. Defaults to
    * trusting the explicit settleFee() call (fine for the demo). A production LSP injects a check that
@@ -173,7 +175,7 @@ export class Lsp {
     const err = validateOrder(offering, this.cfg.feeModes, req);
     if (err) throw new OrderError(err.code, err.message);
 
-    const fee = quoteFee(offering, req);
+    const fee = (this.cfg.feeQuote ?? quoteFee)(offering, req);
     const now = this.cfg.now();
     const order_id = this.cfg.idgen();
 
@@ -236,29 +238,16 @@ export class Lsp {
 
     const req = order.request;
     try {
-      // Connect only if not already peered: a redundant connect_peer can crash the acceptor's gossip
-      // actor (ActorAlreadyRegistered), verified live against FNN v0.9.
-      if (req.target_address) {
-        const peers = await this.cfg.rpc.listPeers();
-        if (!peers.some((p) => p.pubkey === req.target_pubkey)) {
-          await this.cfg.rpc.connectPeer(req.target_address);
-        }
-      }
-
-      // Snapshot channels to this peer BEFORE opening, so we can identify the one we just opened
-      // (matching by exact balance is wrong — CKB channels reserve occupied cell capacity, so the
-      // LSP's local_balance is less than the requested funding amount).
-      const before = new Set(
-        (await this.cfg.rpc.listChannels(req.target_pubkey)).map((c) => c.channel_id),
-      );
-      await this.cfg.rpc.openChannel({
+      const ready = await openChannelAndAwait(this.cfg.rpc, {
         pubkey: req.target_pubkey,
+        address: req.target_address,
         fundingAmount: req.lsp_balance,
-        udtTypeScript: assetUdtScript(req.asset),
+        asset: req.asset,
         public: req.public ?? true,
+        readyPollAttempts: this.cfg.readyPollAttempts,
+        pollIntervalMs: this.cfg.readyPollIntervalMs,
+        sleep: this.cfg.sleep,
       });
-
-      const ready = await this.pollForReadyChannel(req, before);
       if (!ready) {
         return this.update(id, {
           state: "failed",
@@ -275,31 +264,6 @@ export class Lsp {
         failure_reason: e instanceof Error ? e.message : String(e),
       });
     }
-  }
-
-  /**
-   * Find the channel we just provisioned: a channel to this peer, in the requested asset, that reached
-   * ChannelReady and did not exist before we opened it (`before` = channel_ids present pre-open). We
-   * identify by novelty + peer + asset rather than exact balance, because a CKB channel's occupied cell
-   * reserve makes the LSP's local_balance smaller than the requested funding amount.
-   */
-  private async pollForReadyChannel(
-    req: CreateOrderRequest,
-    before: Set<string>,
-  ): Promise<RawChannel | null> {
-    const wantId = canonicalAssetId(req.asset);
-    for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
-      const channels = await this.cfg.rpc.listChannels(req.target_pubkey);
-      const match = channels.find(
-        (c) =>
-          !before.has(c.channel_id) &&
-          canonicalAssetId(channelAsset(c)) === wantId &&
-          isChannelReady(c),
-      );
-      if (match) return match;
-      if (i < this.cfg.readyPollAttempts - 1) await this.cfg.sleep(this.cfg.readyPollIntervalMs);
-    }
-    return null;
   }
 
   private requireOrder(id: string): Order {
@@ -325,12 +289,6 @@ export class Lsp {
       console.warn(`[lsp] webhook to ${url} failed: ${e instanceof Error ? e.message : String(e)}`);
     });
   }
-}
-
-/** The asset a channel is denominated in, from its funding_udt_type_script (null ⇒ CKB). */
-export function channelAsset(c: RawChannel): { kind: "CKB" } | ReturnType<typeof udtAsset> {
-  const s = c.funding_udt_type_script as UdtTypeScript | null | undefined;
-  return s ? udtAsset(s) : CKB;
 }
 
 /**

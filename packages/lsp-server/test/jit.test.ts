@@ -251,6 +251,25 @@ test("createOrder rejects (as a 4xx JitError) when the fee exceeds the payment",
   assert.ok(!node.calls.includes("new_invoice"), "no hold minted when the fee swallows the payment");
 });
 
+test("JIT fee is pluggable via feeFor (pricing is policy, not mechanism)", async () => {
+  const node = makeNode({ legAmount: "99999995" });
+  const svc = new JitService({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
+    terms,
+    supportedAssets: [offering],
+    linkageVerifier: exposedSecretVerifier,
+    feeFor: () => 5n, // flat 5-unit fee regardless of the static terms
+    pollIntervalMs: 0,
+    readyPollAttempts: 3,
+    sleep: async () => {},
+    idgen: () => "jit_1",
+    tokenGenerator: () => "tok_1",
+  });
+  const order = await svc.createOrder(req({ amount: "100000000" }));
+  assert.equal(order.fee, "5");
+  assert.equal(order.forward_amount, "99999995");
+});
+
 test("concurrent creates with the same leg hash cannot both pass the duplicate guard", async () => {
   const { svc } = makeService();
   const results = await Promise.allSettled([svc.createOrder(req()), svc.createOrder(req())]);

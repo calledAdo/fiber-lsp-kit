@@ -5,9 +5,10 @@ import {
   CKB,
   type AssetOffering,
   type CreateOrderRequest,
+  type FeeQuote,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp, OrderError, makeInvoiceFeeVerifier } from "@fiberlsp/server";
+import { Lsp, OrderError, createApi, makeInvoiceFeeVerifier, type ApiMiddleware } from "@fiberlsp/server";
 import { makeMockRpc } from "./mockRpc.js";
 
 const RUSD = udtAsset(
@@ -226,4 +227,52 @@ test("webhook_url receives a POST on each order state transition", async () => {
   assert.deepEqual([...new Set(events.map((e) => e.url))], ["http://hook.test/orders"]);
   assert.ok(states.includes("opening"), "opening transition delivered");
   assert.ok(states.includes("channel_active"), "channel_active transition delivered");
+});
+
+test("fee pricing is pluggable via feeQuote (policy, not mechanism)", async () => {
+  const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true });
+  const custom: FeeQuote = {
+    asset: CKB,
+    base_fee: "0",
+    proportional_fee: "0",
+    total_fee: "42",
+    fee_mode: "prepaid",
+  };
+  const lsp = new Lsp({
+    rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
+    lspPubkey: "0xLSP",
+    addresses: [],
+    supportedAssets: offerings,
+    feeModes: ["prepaid"],
+    feeQuote: () => custom, // dynamic/per-client pricing injected instead of the static fee_schedule
+    now: () => 1_000,
+    idgen: () => "o1",
+  });
+  const order = await lsp.createOrder({
+    target_pubkey: "0xC",
+    asset: RUSD,
+    lsp_balance: "100000",
+    fee_mode: "prepaid",
+  });
+  assert.equal(order.fee.total_fee, "42");
+});
+
+test("createApi runs middleware around the core dispatcher (auth short-circuit)", async () => {
+  const { lsp } = makeLsp();
+  const seen: string[] = [];
+  const authMw: ApiMiddleware = async (req, next) => {
+    seen.push(req.path);
+    if (req.headers?.authorization !== "Bearer ok") {
+      return { status: 401, body: { error: { code: "unauthorized", message: "missing token" } } };
+    }
+    return next();
+  };
+  const api = createApi(lsp, { middleware: [authMw] });
+
+  const denied = await api("GET", "/lsp/v1/info");
+  assert.equal(denied.status, 401);
+
+  const allowed = await api("GET", "/lsp/v1/info", undefined, { authorization: "Bearer ok" });
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(seen, ["/lsp/v1/info", "/lsp/v1/info"]);
 });

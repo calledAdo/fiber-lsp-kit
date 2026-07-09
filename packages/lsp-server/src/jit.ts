@@ -14,15 +14,12 @@ import {
   asBig,
   assetEquals,
   assetUdtScript,
-  canonicalAssetId,
   deriveHoldPreimageFromLeg,
   fraudEvidenceDualSha256,
   jitFee,
-  jitForwardAmount,
   verifyDualSha256Linkage,
 } from "@fiberlsp/protocol";
-import { isChannelReady, type FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { channelAsset } from "./lsp.js";
+import { openChannelAndAwait, type FiberChannelRpcClient } from "@fiberlsp/fiber";
 import { MemoryJitStore, type JitOrderRecord, type JitStore } from "./jitStore.js";
 import { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
 
@@ -42,6 +39,8 @@ export interface JitServiceConfig {
   terms: JitTerms;
   supportedAssets: AssetOffering[];
   linkageVerifier: LinkageVerifier;
+  /** Pricing policy: the fee deducted from a gross payment. Defaults to `jitFee` over the static terms. */
+  feeFor?: (terms: JitTerms, gross: bigint) => bigint;
   /** Channel capacity as a multiple of gross payment when merchant does not request one. */
   capacityMultiplier?: number;
   /** Optional floor above the offering min_capacity. */
@@ -127,13 +126,11 @@ export class JitService {
     await this.verifyLinkage(req);
     this.assertNoDuplicate(req);
 
-    let forward: bigint;
-    try {
-      forward = jitForwardAmount(this.cfg.terms, gross);
-    } catch {
-      throw new JitError("fee_exceeds_amount", `payment ${gross} does not cover the JIT fee`);
+    const fee = (this.cfg.feeFor ?? jitFee)(this.cfg.terms, gross);
+    if (fee >= gross) {
+      throw new JitError("fee_exceeds_amount", `payment ${gross} does not cover the JIT fee ${fee}`);
     }
-    const fee = jitFee(this.cfg.terms, gross);
+    const forward = gross - fee;
     const parsed = await this.cfg.rpc.parseInvoice(req.merchant_invoice);
     if (parsed.invoice?.data?.payment_hash !== req.leg_hash) {
       throw new JitError("hash_mismatch", "merchant_invoice payment_hash != leg_hash");
@@ -383,38 +380,20 @@ export class JitService {
   }
 
   private async openAndAwait(id: string): Promise<string | undefined> {
-    const rec = this.require(id);
-    const req = rec.request;
-    if (req.target_address) {
-      const peers = await this.cfg.rpc.listPeers();
-      if (!peers.some((p) => p.pubkey === req.target_pubkey)) await this.cfg.rpc.connectPeer(req.target_address);
-    }
-    const before = new Set((await this.cfg.rpc.listChannels(req.target_pubkey)).map((c) => c.channel_id));
-    await this.cfg.rpc.openChannel({
+    const req = this.require(id).request;
+    // Abandon a late-funding orphan on give-up so a stray retry can't strand the LSP's capacity.
+    const ready = await openChannelAndAwait(this.cfg.rpc, {
       pubkey: req.target_pubkey,
+      address: req.target_address,
       fundingAmount: req.channel_capacity as string,
-      udtTypeScript: assetUdtScript(req.asset),
+      asset: req.asset,
       public: true,
+      readyPollAttempts: this.cfg.readyPollAttempts,
+      pollIntervalMs: this.cfg.pollIntervalMs,
+      sleep: this.cfg.sleep,
+      abandonOrphanOnTimeout: true,
     });
-    const wantId = canonicalAssetId(req.asset);
-    for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
-      const chans = await this.cfg.rpc.listChannels(req.target_pubkey);
-      const match = chans.find(
-        (c) => !before.has(c.channel_id) && canonicalAssetId(channelAsset(c)) === wantId && isChannelReady(c),
-      );
-      if (match) return match.channel_outpoint ?? undefined;
-      if (i < this.cfg.readyPollAttempts - 1) await this.cfg.sleep(this.cfg.pollIntervalMs);
-    }
-    try {
-      for (const c of await this.cfg.rpc.listChannels(req.target_pubkey)) {
-        if (!before.has(c.channel_id) && canonicalAssetId(channelAsset(c)) === wantId && !isChannelReady(c)) {
-          await this.cfg.rpc.abandonChannel(c.channel_id);
-        }
-      }
-    } catch {
-      /* refund proceeds regardless */
-    }
-    return undefined;
+    return ready?.channel_outpoint ?? undefined;
   }
 
   private async forward(id: string): Promise<boolean> {

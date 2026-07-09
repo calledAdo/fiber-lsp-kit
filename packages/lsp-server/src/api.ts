@@ -23,17 +23,28 @@ export interface ApiResponse {
 
 export type ApiHeaders = Record<string, string | string[] | undefined>;
 
+/** A parsed inbound request, passed through the middleware chain. */
+export interface ApiRequest {
+  method: string;
+  path: string;
+  body?: unknown;
+  headers?: ApiHeaders;
+}
+
+/**
+ * Cross-cutting policy that wraps the core dispatcher: auth, rate limiting, logging, metrics. Call `next()`
+ * to continue the chain (and inspect/replace its response), or return early to short-circuit (e.g. a 401).
+ * Middleware is *policy* — the core routing/state machine it wraps stays rigid.
+ */
+export type ApiMiddleware = (req: ApiRequest, next: () => Promise<ApiResponse>) => Promise<ApiResponse>;
+
 export function createApi(
   lsp: Lsp,
-  opts: { jit?: JitService } = {},
+  opts: { jit?: JitService; middleware?: ApiMiddleware[] } = {},
 ) {
   const jit = opts.jit;
-  return async function handle(
-    method: string,
-    path: string,
-    body?: unknown,
-    headers?: ApiHeaders,
-  ): Promise<ApiResponse> {
+  const core = async (req: ApiRequest): Promise<ApiResponse> => {
+    const { method, path, body, headers } = req;
     try {
       const parts = path.replace(/^\/+|\/+$/g, "").split("/"); // ["lsp","v1","orders",...]
       const route = parts.slice(0, 3).join("/");
@@ -94,6 +105,21 @@ export function createApi(
       }
       return err(500, "internal", e instanceof Error ? e.message : String(e));
     }
+  };
+
+  // Compose middleware around the core dispatcher (last in the array runs closest to core).
+  const chain = (opts.middleware ?? []).reduceRight<(req: ApiRequest) => Promise<ApiResponse>>(
+    (next, mw) => (req) => mw(req, () => next(req)),
+    core,
+  );
+
+  return function handle(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: ApiHeaders,
+  ): Promise<ApiResponse> {
+    return chain({ method, path, body, headers });
   };
 }
 

@@ -19,9 +19,8 @@ import {
   asBig,
   assetEquals,
   assetUdtScript,
-  udtAsset,
 } from "@fiberlsp/protocol";
-import { isChannelReady, type FiberChannelRpcClient, type RawChannel } from "@fiberlsp/fiber";
+import { channelAsset, isChannelReady, type FiberChannelRpcClient } from "@fiberlsp/fiber";
 
 export interface InvoiceServiceConfig {
   /** The receiver's own FNN node. */
@@ -96,11 +95,6 @@ export class ReceiveNotReadyError extends Error {
 /** `Paid` is settled; `Cancelled`/`Expired` are terminal failures. `Open`/`Received` are still in flight. */
 function isInvoiceTerminal(status: InvoiceStatus): boolean {
   return status === "Paid" || status === "Cancelled" || status === "Expired";
-}
-
-/** The asset a channel is denominated in (CKB when there's no UDT funding script). */
-function channelAsset(c: RawChannel): Asset {
-  return c.funding_udt_type_script ? udtAsset(c.funding_udt_type_script) : { kind: "CKB" };
 }
 
 export class InvoiceService {
