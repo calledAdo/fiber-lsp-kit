@@ -91,10 +91,13 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   merchant leg reveals the linked preimage. **The first sale buys the channel** — no out-of-band activation fee,
   though a live merchant Fiber node still needs enough CKB for its own cell reserve.
   See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §6.
-- **Discovery.** Two sources, the wallet's choice: a **registry** of LSP REST endpoints (the practical default —
-  fast, orderable immediately, shipped as [`registry/providers.json`](./registry/providers.json)) and the
-  **gossip graph** (the more authentic, on-chain-verifiable capability
-  signal, registry-free). See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md).
+- **Discovery.** The primary path is a **registry** of LSP REST endpoints — fast and immediately orderable,
+  shipped as [`registry/providers.json`](./registry/providers.json) (a public phonebook; add yours by PR). It
+  carries only static identity; live terms come from each provider's `/lsp/v1/info`. Richer **gossip-graph**
+  discovery (reading auto-accept capability straight from the on-chain graph) also works today for established
+  nodes and is a forward-looking layer we're developing further — a newly-announced node propagates its
+  capability slowly (see [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) #10), so the
+  registry stays the dependable default. See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md).
 - **Getting paid.** The merchant issues a node-native invoice; the payer routes to it over the gossip graph via
   HTLC/TLC hops unlocked by one shared preimage. We proved a real **3-node routed** RUSD payment where the LSP
   earned a forwarding fee, and the merchant's backend received an `invoice.paid` webhook + a reconciled ledger.

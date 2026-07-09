@@ -2,7 +2,7 @@
 
 Fiber LSP Kit ships a working protocol, reference server, and client SDK, proven on testnet — including
 the **streaming lease** (rent in the channel asset out of revenue) and **atomic JIT channels** (hold-invoice
-provisioning, one merchant secret linking two tagged hashes). What's here is honest about being a reference implementation; below
+provisioning, one merchant secret linking the customer hold and merchant leg invoice hashes). What's here is honest about being a reference implementation; below
 is the path toward something node operators could run in production.
 
 ## Near term
@@ -25,6 +25,12 @@ is the path toward something node operators could run in production.
 
 - **Liquidity marketplace.** Grow the provider registry into a real discovery layer; the client SDK already
   compares quotes across LSPs (`compareQuotes`). Add reputation/uptime signals.
+- **Gossip-graph discovery as a first-class path.** Registry is the primary discovery mechanism today; graph
+  discovery (`discoverFromGraph`) works for established nodes but a newly-announced LSP is not graph-visible
+  for a long time because its `node_announcement` (carrying the auto-accept capability) lags its
+  `channel_announcement` (upstream finding #10). Make graph discovery dependable for newcomers — pushing the
+  upstream re-broadcast fix and a native LSP-capability advertisement (finding #3) — so the gossip graph can
+  stand on its own as a registry-free discovery layer.
 - **More assets.** Any UDT works today; add curated offerings and per-asset floors sourced from each
   client node's `auto_accept_amount`.
 - **On-chain-enforced lease terms.** A Fiber channel *is* a live CKB cell, and CKB requires cell-deps to be
