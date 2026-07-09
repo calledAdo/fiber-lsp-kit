@@ -158,6 +158,16 @@ async function main() {
       // its own, so give the JIT open the same generous window as the purchase flow (default would be 2 s).
       ...(process.env.READY_POLL_INTERVAL_MS ? { pollIntervalMs: Number(process.env.READY_POLL_INTERVAL_MS) } : {}),
     });
+    if (!process.env.JIT_STORE_PATH) {
+      // JIT holds customer funds while it opens/forwards. resume() only recovers orders it can still read,
+      // so with the in-memory store a crash loses every in-flight order — a held customer payment then waits
+      // out the hold-invoice expiry for its auto-refund instead of resuming. Safe for funds, bad for uptime.
+      console.warn(
+        "[jit] WARNING: no JIT_STORE_PATH set — using an in-memory store. In-flight JIT orders will NOT " +
+          "survive a restart (resume() has nothing to re-drive); a held payment then relies on the hold " +
+          "expiry to auto-refund. Set JIT_STORE_PATH to a file for crash recovery in production.",
+      );
+    }
   } else {
     console.warn("[jit] disabled: set LINKED_JIT_VK_PATH or JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1");
   }
