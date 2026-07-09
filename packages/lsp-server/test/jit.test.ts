@@ -330,6 +330,12 @@ test("resume() re-drives a forwarding order to settlement (crash recovery)", asy
   assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
 });
 
+test("terms advertise the computed min_expiry_seconds so a merchant can inspect the floor", () => {
+  const { svc } = makeService(); // pollIntervalMs 0, readyPollAttempts 3, settleMargin default 60
+  assert.equal(svc.terms.min_expiry_seconds, 60); // 2*openBudget(0) + settleMargin(60)
+  assert.equal(svc.terms.max_expiry_seconds, terms.max_expiry_seconds);
+});
+
 test("JIT fee is pluggable via feeFor (pricing is policy, not mechanism)", async () => {
   const node = makeNode({ legAmount: "99999995" });
   const svc = new JitService({

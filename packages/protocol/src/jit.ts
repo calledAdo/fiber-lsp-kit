@@ -62,6 +62,11 @@ export interface JitTerms {
   min_payment: string;
   /** Longest hold window the LSP will grant, in seconds. */
   max_expiry_seconds: number;
+  /**
+   * Shortest hold the LSP will grant, in seconds — its open+forward+settle budget. Advertised (not
+   * operator-set) so a merchant can inspect it and reject an LSP whose floor it dislikes before ordering.
+   */
+  min_expiry_seconds?: number;
 }
 
 /** Response of create/get JIT order. */

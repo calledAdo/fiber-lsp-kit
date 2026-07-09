@@ -31,6 +31,8 @@ export interface JitCheckoutConfig {
   sleep?: (ms: number) => Promise<void>;
   /** Required for real use: build a proof linking hold_hash and leg_hash without exposing the secret. */
   proveLinkage?: (holdHash: string, legHash: string, secretHex: string) => LinkageProof | Promise<LinkageProof>;
+  /** Seconds the leg invoice is set to outlive the LSP hold window (covers the on-chain open). Default 1800. */
+  legExpiryBufferSeconds?: number;
 }
 
 export interface JitCheckoutRequest {
@@ -99,7 +101,8 @@ export class JitCheckout {
 
     // The leg must outlive the LSP hold (which the LSP may set up to terms.max_expiry_seconds), or it could
     // expire before the LSP forwards. Give it max_expiry plus slack for the on-chain open, never less.
-    const legExpiry = Math.max(req.expirySeconds ?? 0, terms.max_expiry_seconds) + 1800;
+    const legExpiry =
+      Math.max(req.expirySeconds ?? 0, terms.max_expiry_seconds) + (this.cfg.legExpiryBufferSeconds ?? 1800);
     const legInv = await this.cfg.rpc.newInvoice({
       amount: net,
       description: req.description ?? "jit checkout (merchant leg)",

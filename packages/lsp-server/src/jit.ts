@@ -59,6 +59,8 @@ export interface JitServiceConfig {
   readyPollAttempts?: number;
   /** Seconds reserved after the merchant-leg forward for the hold settle to land before expiry. Default 60. */
   settleMarginSeconds?: number;
+  /** Hold expiry granted when the merchant does not request one (clamped to the safe floor). Default 600. */
+  defaultExpirySeconds?: number;
   deliverWebhook?: (url: string, order: JitOrder) => Promise<void>;
   onFraud?: (evidence: { a: string; b: string; preimage: string }, order: JitOrder) => void;
 }
@@ -84,6 +86,7 @@ export class JitService {
       | "pollIntervalMs"
       | "readyPollAttempts"
       | "settleMarginSeconds"
+      | "defaultExpirySeconds"
     >
   > &
     JitServiceConfig;
@@ -103,12 +106,14 @@ export class JitService {
       pollIntervalMs: 2000,
       readyPollAttempts: 150,
       settleMarginSeconds: 60,
+      defaultExpirySeconds: 600,
       ...config,
     };
   }
 
+  /** Advertised terms: the operator's pricing plus the computed minimum hold floor (for merchant inspection). */
   get terms(): JitTerms {
-    return this.cfg.terms;
+    return { ...this.cfg.terms, min_expiry_seconds: this.minExpirySeconds() };
   }
 
   getOrder(id: string, token?: string): JitOrder | undefined {
@@ -154,7 +159,7 @@ export class JitService {
         `channel-open budget needs a ${minExpiry}s hold but max_expiry_seconds is ${this.cfg.terms.max_expiry_seconds}`,
       );
     }
-    const requested = req.expiry_seconds ?? Math.max(600, minExpiry);
+    const requested = req.expiry_seconds ?? Math.max(this.cfg.defaultExpirySeconds, minExpiry);
     const expirySeconds = Math.min(Math.max(requested, minExpiry), this.cfg.terms.max_expiry_seconds);
 
     // The merchant leg must outlive the hold, or it can expire before the LSP forwards — a doomed order that
