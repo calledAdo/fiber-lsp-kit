@@ -30,23 +30,14 @@ armchair reasoning would have surfaced:
    `ckb` actor, sheds every peer, and never completes the Init handshake, so it can neither accept a channel
    nor route. (Surfaced while building the 3-node routed test; funding the fresh merchant node fixed it.)
 
-Each fix was verified end-to-end: an LSP provisioning **10 RUSD** of inbound to a fresh client that funded
-**0**, the client **receiving 5 RUSD** over that channel, and finally a **3-node routed** payment where a
-customer pays a fresh merchant *through the LSP hub* over kit-provisioned inbound (reproduce with `scripts/demo/`). The
-molecule `Script` encoder was checked byte-for-byte against a real node's `udt_script`.
-
-Two of the issues above are written up as upstream reports in
+Several of these are written up as upstream reports in
 [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md).
 
 ## Testing regime
 
-- The offline test suite runs through the **real** RPC code path (a scripted transport, not stubbed logic).
+- The offline suite runs through the **real** RPC code path (a scripted transport, not stubbed logic).
 - `npm run demo` exercises the whole merchant flow node-lessly (real kit code + a real webhook sink).
-- `npm run test:live` re-checks the real RPC surface against a running node on demand.
-- The live provision/invoice/pay/rent flow is reproducible via the scripts in `scripts/demo/` (discover →
-  buy → invoice → routed pay → stream rent).
-- The JIT design was **spiked live before any kit code was written**: hold invoices, `settle_invoice`
-  release, `cancel_invoice` refund, the same-node hold/forward collision, the real hold window (invoice
-  expiry, not the 120 s constant), and an early multi-node atomic rehearsal. The current shipped JIT path is
-  the single-node linked-hash design covered by the offline tests and spec §6; the failed hypotheses became
-  upstream issue drafts.
+- `npm run test:live` re-checks the real RPC surface against a running node.
+- The live provision → invoice → routed pay → stream-rent flow is reproducible via `scripts/demo/`.
+- JIT behaviour (hold, settle, refund, hold-window semantics) was spiked live against a node before the kit
+  code was written; the shipped path is the single-node linked-hash design in spec §6.

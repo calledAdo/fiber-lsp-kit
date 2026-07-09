@@ -17,25 +17,16 @@ before the merchant can show a payable invoice. JIT changes the order of operati
 
 This is atomic from the payment perspective: deliver to the merchant or refund the payer.
 
-## Why Two Hashes Are Needed
+## The linked-hash construction
 
-One FNN node cannot safely hold `invoice(H)` and also send `payment(H)`. The node can mark its own invoice as
-paid and reject the held TLC. The shipped mechanism therefore uses two different SHA-256 hashes derived from
-one merchant secret. Crucially, both invoice **preimages stay 32 bytes** — an FNN invoice preimage is a fixed
-`Hash256`, so the tagged value is hashed down rather than fed in raw:
+One FNN node cannot safely hold `invoice(H)` and also send `payment(H)` — it can mark its own invoice paid and
+reject the held TLC. So the customer hold and the merchant leg use two different hashes derived from one
+merchant secret `S`, linked by a zero-knowledge proof the LSP verifies before committing capital. Paying the
+leg reveals `S`, from which the LSP derives the hold preimage and settles.
 
-```text
-S           = merchant-generated 32-byte secret
-leg_hash  B = sha256(S)                              (leg invoice; preimage = S, 32 bytes)
-hold_hash A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
-                                                     (hold invoice; preimage = sha256(TAG||S), 32 bytes)
-```
-
-Paying the leg reveals `S`; the LSP derives the hold preimage `sha256(TAG||S)` and settles the hold. The tag
-is essential — without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone settle
-the customer hold. The LSP verifies a proof that `A` and `B` come from the same hidden `S`. In production this
-proof is `groth16-dual-sha256`. For local tests only, the repo also has `exposed-secret`, which reveals
-`S` and must not be used as a production mode.
+The exact hashes, the proof scheme (`groth16-dual-sha256`, or the test-only `exposed-secret`), and why both
+preimages are kept to 32 bytes are specified once in
+[`LSPS-Fiber.md` §6](./LSPS-Fiber.md#6-jit-channels--single-node-linked-hash-hold-provisioning).
 
 ## Merchant SDK API
 
@@ -186,12 +177,25 @@ JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1 npm run server
 That mode reveals the merchant secret to the LSP before forwarding. It is useful for tests and demos of API
 control flow, but it is not the security model.
 
+## Artifact distribution
+
 The circuit source is in
-[`packages/protocol/circuits/dual-sha256-linkage`](../packages/protocol/circuits/dual-sha256-linkage). Generated
-`.zkey`, `.ptau`, witness, proof, and verification-key files are intentionally ignored by git. Integrators do
-**not** run the ceremony — they download the artifacts: the merchant needs `.wasm` + final `.zkey` to prove,
-the LSP needs `verification_key.json` to verify. Which file carries what trust, and how to distribute them, is
-in [`zk-artifacts.md`](./zk-artifacts.md).
+[`packages/protocol/circuits/dual-sha256-linkage`](../packages/protocol/circuits/dual-sha256-linkage);
+generated `.zkey`/`.ptau`/`.wasm`/vk files are git-ignored. Integrators do **not** run the ceremony — they
+download the artifacts:
+
+| Role | Files | Trust |
+|---|---|---|
+| Merchant (prover) | `dual_sha256_linkage.wasm` + final `.zkey` | none — pure computation, safe to publish |
+| LSP (verifier) | `verification_key.json` | must come from a ceremony you trust |
+
+The `.zkey` and vk must be a matched pair from the same ceremony. The vk is security-critical: a Groth16 setup
+has toxic waste, and whoever ran the ceremony could forge a linkage proof — a forged proof makes the LSP open
+the channel and pay the merchant leg, then fail to settle the customer hold (loss). So an LSP must trust the vk
+came from a ceremony with at least one honest participant. **This repo's artifacts are a single-party dev
+ceremony — test-only.** For production, reuse a trusted Powers-of-Tau phase 1 and run a multi-party phase-2
+ceremony, then publish `.wasm`+`.zkey` for provers and the vk + transcript for verifiers as Release assets
+(with content hashes), not in git.
 
 ## Latency
 

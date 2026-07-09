@@ -152,23 +152,7 @@ falls back to the built-in issue-over-inbound path when no strategy is set.
 `selectLinkageVerifiers()` (Groth16, or the test-only exposed-secret path, never both). A provider swaps any
 brick — persistence, pricing, proof backend — without forking the flow.
 
-## What Is Working
+## Status and gaps
 
-- Offline demo: `npm run demo` exercises the real SDK/server/ledger path over scripted FNN transports.
-- Live demo harness: `scripts/demo/` reproduces discovery, inbound purchase, invoice, routed payment, webhook,
-  ledger export, and streaming rent against real testnet nodes.
-- Static console: `apps/demo-console` can be hosted without a backend for judges.
-- JIT service and SDK: implemented and tested with the single-node linked-hash mechanism.
-- Composable receive strategies: `DirectReceive` / `JitReceive` / `autoStrategy` behind one `ReceiveStrategy`
-  interface, selectable in `MerchantCheckout` — the have / buy / JIT choice is composition, not a fixed flow.
-- ZK verifier interface: implemented for Groth16 public-signal verification; generated proving artifacts are
-  not committed.
-
-## Production Gaps
-
-- LSP REST auth, rate limits, metrics, and operator dashboard.
-- On-chain verification for activation fees in the zero-capital non-JIT purchase path.
-- Production trusted setup and artifact distribution for the JIT linkage proof.
-- Durable production stores such as SQLite or Postgres instead of file-backed reference stores.
-- Native Fiber graph advertisement for LSP endpoints and JIT capability versions.
-- Sub-second JIT, which requires upstream HTLC interception and zero-conf channel support.
+What is fully working, what is reference-grade, and what production needs are in the root
+[`README.md`](../README.md) status table; the roadmap for the gaps is in [`ROADMAP.md`](../ROADMAP.md).

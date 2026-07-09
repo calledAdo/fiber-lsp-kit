@@ -3,9 +3,8 @@
 A zero-dependency static demo of the Fiber LSP Kit flow: connect to an LSP → buy **RUSD inbound** with
 zero client capital → **receive** a real stablecoin payment over it → view per-asset liquidity.
 
-- **Replay mode** (default) plays back the real values captured from a live CKB testnet run —
-  order id, fee, channel outpoint, payment hash and balances are all genuine.
-  No node required, so it hosts anywhere static.
+- **Replay mode** (default) plays back a captured run — order id, fee, channel outpoint, payment hash, and
+  balances — with no node required, so it hosts anywhere static.
 - **Live mode** points the same UI at a running reference server (`npm run server` in the repo root) via
   its base URL; it drives the real `/lsp/v1/*` endpoints. (The final "receive" step needs the second node,
   so it stays replayed.)

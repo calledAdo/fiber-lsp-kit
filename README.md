@@ -35,9 +35,9 @@ conforming implementation.
 ## The gap we fill
 
 You can only receive what someone has funded *toward* you. A new wallet has **zero inbound** → it can't be
-paid. On live testnet we measured how scarce per-asset inbound is: of **807 public channels**, only **6** carry
-RUSD. So a merchant that wants a stablecoin is unreachable until an LSP opens a public RUSD channel to it —
-**that provisioning, plus the merchant tooling to run on it, is this kit.**
+paid. Per-asset inbound is scarce on testnet — of **807 public channels**, only **6** carry RUSD. So a
+merchant that wants a stablecoin is unreachable until an LSP opens a public RUSD channel to it — **that
+provisioning, plus the merchant tooling to run on it, is this kit.**
 
 ## What's in the box
 
@@ -83,7 +83,7 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   **CKB** first payment that opens the channel and is the minimum stake — then **streaming** rent in the
   **channel's own asset**, paid by keysend out of revenue over the same channel (no second channel, no oracle).
   Rent aligns incentives: an LSP that closes early forfeits future rent, and paying rent back **restores the
-  merchant's inbound**. Verified live (keysend RUSD settled on testnet). See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §5.
+  merchant's inbound**. See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md) §5.
 - **JIT channels (atomic).** A merchant with **zero channels** shows a customer a **hold invoice**; the
   customer's payment is *captured and held* while the LSP opens a fresh channel on-chain, then forwarded
   (minus the JIT fee). The current JIT path is **single-node linked-hash JIT**: the customer hold hash and
@@ -99,8 +99,8 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   capability slowly (see [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) #10), so the
   registry stays the dependable default. See [`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md).
 - **Getting paid.** The merchant issues a node-native invoice; the payer routes to it over the gossip graph via
-  HTLC/TLC hops unlocked by one shared preimage. We proved a real **3-node routed** RUSD payment where the LSP
-  earned a forwarding fee, and the merchant's backend received an `invoice.paid` webhook + a reconciled ledger.
+  HTLC/TLC hops unlocked by one shared preimage. A **routed** payment through the LSP hub earns it a forwarding
+  fee, and the merchant's backend receives an `invoice.paid` webhook and a reconciled ledger.
 
 The full **protocol, REST API, and fee model** are in **[`docs/LSPS-Fiber.md`](./docs/LSPS-Fiber.md)**; the live
 integration facts we pinned from FNN source are in **[`AI-USAGE.md`](./AI-USAGE.md)**.

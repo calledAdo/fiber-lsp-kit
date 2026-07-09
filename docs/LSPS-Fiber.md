@@ -114,7 +114,7 @@ proportional term applies only to CKB channels (same unit); UDT channels are cha
 `from_capacity` is CKB-only because the post-open fee payment must come from the client's outbound *on the
 new channel*, which is only CKB when the channel is CKB. A UDT channel cannot pay a CKB fee from itself.
 
-> **The fee bootstrap (confirmed on testnet).** An LSP-opened channel where the client contributes 0 leaves
+> **The fee bootstrap.** An LSP-opened channel where the client contributes 0 leaves
 > the client with **0 outbound**, so it cannot pay a fee *over Fiber* from that channel — not a `from_capacity`
 > in-channel payment, and not even a `prepaid` Fiber `fee_invoice`. For the genuinely-zero-capital client the
 > `prepaid` fee must therefore be an **out-of-band CKB payment**: on-chain to the LSP's address, or routed
@@ -142,10 +142,10 @@ own asset** — not CKB. Charging it post-revenue in the leased asset is both po
 `LeaseTerms = { asset, capacity } & StreamTerms`. The combined price is `quoteLease(offering, capacity) →
 { activation (CKB), stream: { rentPerPeriod (channel asset) } }`.
 
-How rent is paid — and why it needs no new plumbing (all **verified live**, FNN v0.9.0-rc5):
+How rent is paid — and why it needs no new plumbing:
 
 - **By keysend** — the merchant pays the LSP's pubkey with a spontaneous payment; the LSP issues **no
-  per-period invoice**. Confirmed on testnet: a keysend RUSD payment to the LSP settled `Success`, fee `0`.
+  per-period invoice**.
 - **Over the same channel, in the same asset, out of revenue** — once a customer has paid the merchant, the
   merchant holds local balance on the leased channel and streams rent back over it. No second channel, no CKB
   rail. Pre-revenue there is nothing to pay from, so rent naturally **defers to the first sale** (a `dry_run`
@@ -175,8 +175,8 @@ invoices and a linked-hash construction that works with one LSP node.
 The same-hash design is not safe on one node: a node that holds `invoice(H)` and later sends `payment(H)`
 can mark its own invoice paid and reject the held TLC. The canonical JIT flow therefore derives two
 different SHA-256 hashes from one merchant secret. An FNN invoice preimage is a fixed 32-byte `Hash256`
-(verified live: a longer preimage is rejected with "failed to convert vector into type"), so both invoice
-**preimages are kept to 32 bytes** — the domain-tagged value is hashed down rather than fed in raw:
+(a longer preimage is rejected), so both invoice **preimages are kept to 32 bytes** — the domain-tagged
+value is hashed down rather than fed in raw:
 
 ```text
 S            = merchant-generated 32-byte secret

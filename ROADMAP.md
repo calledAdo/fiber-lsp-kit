@@ -1,8 +1,8 @@
 # Roadmap
 
-Fiber LSP Kit ships a working protocol, reference server, and client SDK, proven on testnet — including
-the **streaming lease** (rent in the channel asset out of revenue) and **atomic JIT channels** (hold-invoice
-provisioning, one merchant secret linking the customer hold and merchant leg invoice hashes). What's here is honest about being a reference implementation; below
+Fiber LSP Kit ships a working protocol, reference server, and client SDK — including the **streaming lease**
+(rent in the channel asset out of revenue) and **atomic JIT channels** (hold-invoice provisioning, one merchant
+secret linking the customer hold and merchant leg invoice hashes). What's here is honest about being a reference implementation; below
 is the path toward something node operators could run in production.
 
 ## Near term
