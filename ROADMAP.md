@@ -10,9 +10,10 @@ is the path toward something node operators could run in production.
 - **A linkage setup the LSP can trust.** JIT is the default provisioning path, so its soundness now carries the
   product — and the shipped artifacts are a **single-party development setup** that must not be trusted with
   real funds. A reproducible build proves the artifacts match the circuit but says nothing about whether the
-  setup's secret was destroyed. The fix, in increasing strength: move to a **universal SRS** (Plonk, seeded from
-  the Perpetual Powers of Tau) so no circuit-specific ceremony of ours exists at all; or run a genuine
-  multi-party phase-2 with published attestations and a final beacon. **PTLCs** would delete the SNARK entirely.
+  setup's secret was destroyed. Phase 1 already uses the public Perpetual Powers of Tau, so nothing there is
+  ours; the gap is Groth16's circuit-specific **phase 2**. The fix is a genuine multi-party phase 2 with
+  published attestations and a final public beacon — coordination cost, no runtime cost. See
+  [`docs/CEREMONY.md`](./docs/CEREMONY.md). **PTLCs** would delete the SNARK entirely.
 - **Escrowed activation bond (prepaid path).** The optional pay-before-open purchase flow is trusted by
   construction — nothing binds the client's fee to a channel actually being opened, and verifying the fee
   on-chain does not change that. A CKB lock script escrowing the activation, claimable by the LSP only against a

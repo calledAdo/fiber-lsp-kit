@@ -245,12 +245,10 @@ publishing an attestation, finalised with `zkey beacon` against a public unpredi
 
 Two paths make the claim defensible, in increasing strength:
 
-1. **Universal SRS.** Move from Groth16 to Plonk, whose SRS is circuit-independent. Its proving key is a
-   *deterministic* function of the circuit and the public ptau — there is no `plonk contribute`, so no
-   circuit-specific ceremony exists and a reproducible build genuinely closes the loop: anyone regenerates the
-   key from source and compares. The costs are a larger proving key and slower proving (the R1CS expands to
-   ~360k Plonk gates), which proof precomputation makes irrelevant at checkout. The verifier already takes the
-   verify function as an injected hook, and the public-signal binding is unchanged.
+1. **A multi-party phase 2.** Independent contributors each extend the key with their own entropy and publish
+   an attestation, and the chain is finalised against a public unpredictable beacon. Soundness then needs only
+   *one* of them to have been honest. This costs coordination, not runtime: the proving key, proof size, and
+   verification are unchanged. See [`CEREMONY.md`](./CEREMONY.md).
 2. **No SNARK at all.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public tweak `t`,
    so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and fulfilling
    one lock yields the opener of the other. This is tracked as an upstream ask in
