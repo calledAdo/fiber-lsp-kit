@@ -5,7 +5,7 @@
  */
 import {
   dualSha256,
-  hashToBitSignals,
+  hashToLimbSignals,
 } from "../packages/protocol/dist/linkageDualSha256.js";
 
 const secret = process.argv[2];
@@ -21,13 +21,16 @@ function hexToBytes(hex) {
   return Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(i * 2, i * 2 + 2), 16));
 }
 
-const secretBytes = hexToBytes(secret);
+const [holdHi, holdLo] = hashToLimbSignals(hold);
+const [legHi, legLo] = hashToLimbSignals(leg);
 
 const out = {
-  secret: secretBytes,
-  hold_hash: hashToBitSignals(hold).map(Number),
-  leg_hash: hashToBitSignals(leg).map(Number),
+  secret: hexToBytes(secret),
+  hold_hi: holdHi,
+  hold_lo: holdLo,
+  leg_hi: legHi,
+  leg_lo: legLo,
 };
 
 console.log(JSON.stringify(out, null, 2));
-console.error(`publicSignals: [${[...hashToBitSignals(hold), ...hashToBitSignals(leg)].join(",")}]`);
+console.error(`publicSignals: [${[holdHi, holdLo, legHi, legLo].join(",")}]`);

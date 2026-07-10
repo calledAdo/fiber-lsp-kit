@@ -184,12 +184,12 @@ export function createGroth16DualSha256Verifier(cfg: Groth16DualSha256VerifierCo
       } catch {
         return false;
       }
-      if (!payload.proof || !Array.isArray(payload.publicSignals) || payload.publicSignals.length !== 512) {
+      if (!payload.proof || !Array.isArray(payload.publicSignals) || payload.publicSignals.length !== 4) {
         return false;
       }
       let expected: string[];
       try {
-        expected = [...hashToBitSignals(holdHash), ...hashToBitSignals(legHash)];
+        expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(legHash)];
       } catch {
         return false;
       }
@@ -206,18 +206,20 @@ export function createGroth16DualSha256Verifier(cfg: Groth16DualSha256VerifierCo
   };
 }
 
-/** Map a 0x-hex 32-byte hash to the 256 big-endian bit strings the circuit exposes as public input. */
-export function hashToBitSignals(hashHex: string): string[] {
+/**
+ * Map a 0x-hex 32-byte hash to the two 128-bit big-endian limbs the circuit exposes as public input:
+ * `[hi, lo]` = bytes 0..15 and bytes 16..31, as decimal field elements.
+ *
+ * Limbs rather than 256 bit signals keep `nPublic` at 4 instead of 512, which shrinks the verification key
+ * (its IC carries `nPublic + 1` group elements) and turns verification into a 5-point multi-scalar
+ * multiplication instead of a 513-point one.
+ */
+export function hashToLimbSignals(hashHex: string): [string, string] {
   const h = hashHex.startsWith("0x") ? hashHex.slice(2) : hashHex;
   if (h.length !== 64 || !/^[0-9a-fA-F]+$/.test(h)) {
     throw new Error("hash must be a 32-byte hex string");
   }
-  const out: string[] = [];
-  for (let i = 0; i < h.length; i += 2) {
-    const byte = parseInt(h.slice(i, i + 2), 16);
-    for (let bit = 7; bit >= 0; bit--) out.push(String((byte >> bit) & 1));
-  }
-  return out;
+  return [BigInt("0x" + h.slice(0, 32)).toString(10), BigInt("0x" + h.slice(32)).toString(10)];
 }
 
 export function groth16DualSha256Proof(payload: Groth16DualSha256ProofPayload): LinkageProof {

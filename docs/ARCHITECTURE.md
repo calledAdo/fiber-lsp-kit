@@ -230,14 +230,21 @@ honest key**. Two consequences follow, and they are easy to conflate:
   mismatched key, and it is worth doing. It says nothing about whether the setup's secret was destroyed, because
   that secret is never a build input. `snarkjs zkey verify` likewise checks derivation and the contribution
   chain, not deletion.
-- **Security rests on at least one honest contributor** in each phase. **This repo ships a single-party
-  development setup and must not be trusted with real funds.**
+- **Security rests on at least one honest contributor** in each of Groth16's two phases.
+
+Phase 1 is handled: the build uses the **public Perpetual Powers of Tau**, which has many independent
+contributors and a published transcript, so no phase-1 secret is ours. **Phase 2 — which Groth16 requires
+per-circuit — is currently a single contribution and is development-only. It must not be trusted with real
+funds.** Production needs a multi-party phase 2: independent contributors each running `zkey contribute` and
+publishing an attestation, finalised with `zkey beacon` against a public unpredictable value.
 
 Two paths make the claim defensible, in increasing strength:
 
-1. **Universal SRS.** Move from Groth16 to Plonk, whose SRS is circuit-independent, and take it from the
-   Perpetual Powers of Tau (many independent contributors, public transcript). This removes the
-   circuit-specific ceremony entirely — there is no setup of ours left to trust. The verifier already takes the
+1. **Universal SRS.** Move from Groth16 to Plonk, whose SRS is circuit-independent. Its proving key is a
+   *deterministic* function of the circuit and the public ptau — there is no `plonk contribute`, so no
+   circuit-specific ceremony exists and a reproducible build genuinely closes the loop: anyone regenerates the
+   key from source and compares. The costs are a larger proving key and slower proving (the R1CS expands to
+   ~360k Plonk gates), which proof precomputation makes irrelevant at checkout. The verifier already takes the
    verify function as an injected hook, and the public-signal binding is unchanged.
 2. **No SNARK at all.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public tweak `t`,
    so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and fulfilling

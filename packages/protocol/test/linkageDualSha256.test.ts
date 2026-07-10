@@ -11,7 +11,7 @@ import {
   compositeLinkageVerifier,
   createGroth16DualSha256Verifier,
   groth16DualSha256Proof,
-  hashToBitSignals,
+  hashToLimbSignals,
   JIT_LINK_SECRET_BYTES,
 } from "@fiberlsp/protocol";
 
@@ -59,7 +59,7 @@ test("exposedSecretVerifier accepts a valid secret proof", () => {
 
 test("linkage verifiers reject malformed inputs without throwing", async () => {
   const { hold, leg } = dualSha256(S);
-  const publicSignals = [...hashToBitSignals(hold), ...hashToBitSignals(leg)];
+  const publicSignals = [...hashToLimbSignals(hold), ...hashToLimbSignals(leg)];
   const verifier = createGroth16DualSha256Verifier({
     verificationKey: { vk: true },
     verifyGroth16: () => true,
@@ -83,18 +83,22 @@ test("compositeLinkageVerifier dispatches by scheme", () => {
   assert.equal(any.verify(hold, leg, { scheme: "unknown", data: "" }), false);
 });
 
-test("hashToBitSignals returns 256 big-endian public bit signals", () => {
-  const bits = hashToBitSignals("0x80" + "00".repeat(31));
-  assert.equal(bits.length, 256);
-  assert.equal(bits[0], "1");
-  assert.equal(bits[1], "0");
-  assert.equal(bits[7], "0");
-  assert.equal(bits[255], "0");
+test("hashToLimbSignals splits a hash into two 128-bit big-endian limbs", () => {
+  // hi = bytes 0..15, lo = bytes 16..31
+  const [hi, lo] = hashToLimbSignals("0x80" + "00".repeat(31));
+  assert.equal(hi, (1n << 127n).toString(10));
+  assert.equal(lo, "0");
+
+  const [hi2, lo2] = hashToLimbSignals("0x" + "00".repeat(31) + "ff");
+  assert.equal(hi2, "0");
+  assert.equal(lo2, "255");
+
+  assert.throws(() => hashToLimbSignals("0xdeadbeef"), /32-byte hex/);
 });
 
-test("Groth16 verifier binds hold and leg hashes as 512 public bit signals", async () => {
+test("Groth16 verifier binds hold and leg hashes as 4 public limb signals", async () => {
   const { hold, leg } = dualSha256(S);
-  const publicSignals = [...hashToBitSignals(hold), ...hashToBitSignals(leg)];
+  const publicSignals = [...hashToLimbSignals(hold), ...hashToLimbSignals(leg)];
   let verifiedSignals: string[] | undefined;
   const verifier = createGroth16DualSha256Verifier({
     verificationKey: { vk: true },
@@ -111,7 +115,7 @@ test("Groth16 verifier binds hold and leg hashes as 512 public bit signals", asy
   assert.deepEqual(verifiedSignals, publicSignals);
 
   const tampered = [...publicSignals];
-  tampered[0] = tampered[0] === "1" ? "0" : "1";
+  tampered[0] = (BigInt(tampered[0]!) + 1n).toString(10); // a limb that no longer matches hold_hash
   assert.equal(
     await verifier.verify(hold, leg, groth16DualSha256Proof({ proof: { pi: true }, publicSignals: tampered })),
     false,
@@ -133,7 +137,7 @@ test("Groth16 verifier rejects malformed proof payloads without calling the veri
       return true;
     },
   });
-  const publicSignals = [...hashToBitSignals(hold), ...hashToBitSignals(leg)];
+  const publicSignals = [...hashToLimbSignals(hold), ...hashToLimbSignals(leg)];
 
   assert.equal(await verifier.verify(hold, leg, { scheme: "groth16-dual-sha256", data: "{" }), false);
   assert.equal(
