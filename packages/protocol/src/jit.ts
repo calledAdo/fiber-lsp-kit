@@ -6,7 +6,7 @@
  * 32 bytes a live FNN node accepts:
  *
  *   leg_hash  = sha256(S)                     -- merchant leg invoice; preimage is S (32 bytes)
- *   hold_hash = sha256(sha256(TAG_HOLD || S)) -- customer hold invoice; preimage is sha256(TAG_HOLD||S)
+ *   hold_hash = sha256(poseidon(S))           -- customer hold invoice; preimage is poseidon(S)
  *
  * The LSP verifies a zero-knowledge linkage proof before committing capital. After the merchant leg settles,
  * the LSP learns the leg preimage, derives the hold preimage, and settles the held customer payment.
@@ -32,7 +32,7 @@ export interface CreateJitOrderRequest {
   target_address?: string;
   /** Channel asset (payment, fee and channel are all denominated in it). */
   asset: Asset;
-  /** sha256(sha256(TAG_HOLD || S)) -- the customer-facing hold invoice hash. */
+  /** sha256(poseidon(S)) -- the customer-facing hold invoice hash. */
   hold_hash: string;
   /** sha256(S) -- must equal the merchant leg invoice's payment_hash (leg preimage is S). */
   leg_hash: string;

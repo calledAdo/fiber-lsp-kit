@@ -180,22 +180,27 @@ settled — deliver to the merchant, or refund the payer.
 
 One FNN node cannot safely hold `invoice(H)` and also send `payment(H)` — it can mark its own invoice paid and
 reject the held TLC. So the hold and the leg use two different hashes derived from one merchant secret `S`. An
-FNN invoice preimage is a fixed 32-byte `Hash256`, so both preimages are kept to 32 bytes — the domain-tagged
-value is hashed down rather than fed in raw:
+FNN invoice preimage is a fixed 32-byte `Hash256`, so both preimages are kept to 32 bytes:
 
 ```text
 S           = merchant-generated 32-byte secret
-leg_hash  B = sha256(S)                              (leg invoice; preimage = S)
-hold_hash A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
-                                                     (hold invoice; preimage = sha256(TAG || S))
+leg_hash  B = sha256(S)              (leg invoice;  preimage = S)
+hold_hash A = sha256(poseidon(S))    (hold invoice; preimage = poseidon(S))
 ```
 
-Paying the leg reveals `S`; the LSP derives the hold preimage `sha256(TAG || S)` and settles. The tag is
-essential — without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone settle the
-hold. Before committing capital the LSP verifies a proof that `A` and `B` come from one hidden `S`:
-`groth16-dual-sha256`, a Groth16 proof of `∃S : sha256(S)=B ∧ sha256(sha256(TAG||S))=A`. The test-only
-`exposed-secret` scheme reveals `S` and is not a security model — with `S` in hand the LSP could settle the hold
-without paying the merchant.
+Paying the leg reveals `S`; the LSP derives the hold preimage `poseidon(S)` and settles. Before committing
+capital it verifies a proof that `A` and `B` come from one hidden `S`: `groth16-dual-sha256`, a Groth16 proof of
+`∃S : sha256(S)=B ∧ sha256(poseidon(S))=A`. The test-only `exposed-secret` scheme reveals `S` and is not a
+security model — with `S` in hand the LSP could settle the hold without paying the merchant.
+
+Only the two **invoice** hashes must be SHA-256, because that is how FNN computes `payment_hash`. The
+derivation is ours to choose and carries no security weight: reaching `hold_preimage` means inverting a
+SHA-256 — either `A` directly, or `B` to recover `S`. Poseidon is used purely because it costs ~250
+constraints against ~30k for a SHA-256 block, which halves the FFT domain and the proving key (**35 MB rather
+than 51 MB** for the merchant). It only has to be deterministic and distinct from `sha256(S)`, or
+`hold_preimage` would equal the *public* leg hash and anyone could settle the customer hold. The JS derivation
+and `poseidon.circom` must agree exactly; a divergence makes the circuit unsatisfiable, so it fails at proof
+generation rather than after the merchant leg is paid.
 
 ### Timing and expiries
 

@@ -194,7 +194,7 @@ channel, and payment state transitions (Lightning's `invoicestream` / channel-ev
 **Severity:** low (enhancement; unlocks a cleaner construction)
 
 **Context.** We showed single-node atomic JIT is possible today by deriving two hashes from one merchant
-secret, kept to the 32-byte preimage a live node accepts (`B = sha256(S)`, `A = sha256(sha256(TAG_HOLD || S))`),
+secret, kept to the 32-byte preimage a live node accepts (`B = sha256(S)`, `A = sha256(poseidon(S))`),
 but it needs an extra proof that A and B are linked by the same hidden secret. Hashes are not homomorphic: there is no public `convert(A) → B` without
 knowing the secret, and no way to *verify* the linkage without a ZK proof or a fraud bond.
 

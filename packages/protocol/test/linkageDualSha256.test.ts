@@ -17,11 +17,31 @@ import {
 
 const S = "0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
-test("dualSha256: hold and leg hashes differ under domain tags", () => {
+test("dualSha256: hold and leg hashes differ, and the hold preimage derives from the leg preimage", () => {
   const { hold, leg, legPreimage, holdPreimage } = dualSha256(S);
   assert.notEqual(hold, leg);
   assert.equal(verifyDualSha256Secret(S, hold, leg), true);
   assert.equal(deriveHoldPreimageFromLeg(legPreimage), holdPreimage);
+  // hold_preimage must never equal the *public* leg hash, or anyone could settle the customer hold
+  assert.notEqual(holdPreimage, leg);
+});
+
+// The JS derivation must agree with poseidon.circom bit-for-bit, or the circuit is unsatisfiable. Pin the
+// canonical circomlib Poseidon(2) vector so a poseidon-lite bump cannot silently diverge from the circuit.
+test("poseidon-lite matches the circomlib Poseidon(2) reference vector", async () => {
+  const { poseidon2 } = await import("poseidon-lite");
+  assert.equal(
+    poseidon2([1n, 2n]).toString(),
+    "7853200120776062878684798364095072458815029376092732009249414926327459813530",
+  );
+});
+
+test("hold preimage is poseidon(S) encoded big-endian into 32 bytes", async () => {
+  const { poseidon2 } = await import("poseidon-lite");
+  const hi = BigInt("0x" + S.slice(2, 34));
+  const lo = BigInt("0x" + S.slice(34));
+  const expected = "0x" + poseidon2([hi, lo]).toString(16).padStart(64, "0");
+  assert.equal(dualSha256(S).holdPreimage, expected);
 });
 
 test("verifyDualSha256Linkage accepts the leg preimage (S) and rejects a mismatched secret", () => {

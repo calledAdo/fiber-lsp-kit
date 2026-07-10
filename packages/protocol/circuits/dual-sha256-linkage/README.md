@@ -1,20 +1,22 @@
 # Dual-SHA256 linkage circuit (Groth16)
 
-Trustless single-node JIT linkage proof without blake2b circuits, with both invoice preimages kept to the
-32 bytes a live FNN node accepts (a `Hash256`): the domain-tagged value is hashed down to 32 bytes rather
-than fed into the invoice raw.
+Single-node JIT linkage proof without blake2b circuits, with both invoice preimages kept to the 32 bytes a
+live FNN node accepts (a `Hash256`).
 
 ## Statement
 
 Given public hold hash `A` and leg hash `B`, prove knowledge of a 32-byte secret `S`:
 
 ```
-B = sha256(S)                                    (leg invoice; preimage = S)
-A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S)) (hold invoice; preimage = sha256(TAG||S))
+B = sha256(S)              (leg invoice;  preimage = S)
+A = sha256(poseidon(S))    (hold invoice; preimage = poseidon(S))
 ```
 
-The tag is essential: without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone
-settle the customer hold. Paying the leg reveals `S`, from which the LSP derives the 32-byte hold preimage.
+Paying the leg reveals `S`, from which the LSP derives the 32-byte hold preimage. Only the two *invoice* hashes
+must be SHA-256 (FNN computes `payment_hash` that way); the derivation carries no security weight, since
+reaching `hold_preimage` means inverting a SHA-256. Poseidon is used because it costs ~250 constraints instead
+of ~30k, halving the FFT domain and the proving key. It only has to be deterministic and distinct from
+`sha256(S)`, or the hold preimage would equal the public leg hash.
 
 Matches `@fiberlsp/protocol` `linkageDualSha256.ts` (`scheme: groth16-dual-sha256`).
 
@@ -53,8 +55,8 @@ limbs (`hold_hi, hold_lo, leg_hi, leg_lo`), matching `hashToLimbSignals()` in th
 
 ## Build
 
-The circuit compiles to 88,457 constraints (three SHA-256 blocks), so `2^17` is the smallest usable
-power-of-tau size.
+The circuit compiles to 59,771 constraints (two SHA-256 blocks + a Poseidon), so `2^16` is the smallest
+usable power-of-tau size.
 
 **Do not generate your own phase 1.** Download the public [Perpetual Powers of
 Tau](https://github.com/privacy-scaling-explorations/perpetualpowersoftau) — many independent contributors and
@@ -63,19 +65,19 @@ a public transcript — so no phase-1 secret is yours to hold:
 ```bash
 cd packages/protocol/circuits/dual-sha256-linkage
 mkdir -p build && cd build
-curl -O https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_17.ptau
-# sha256: 6b662a324867139fb1a20a324d90b6ff61856dfb23f59326909f14b0e2483ae0
+curl -O https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_16.ptau
+# sha256: 1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922
 cd ..
 
 SNARK=../../../../node_modules/.bin/snarkjs
 circom dual_sha256_linkage.circom --r1cs --wasm --sym -l ../../../../node_modules -o build
 $SNARK r1cs info build/dual_sha256_linkage.r1cs
-$SNARK groth16 setup build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_17.ptau build/dual_sha256_linkage_0000.zkey
+$SNARK groth16 setup build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_0000.zkey
 $SNARK zkey contribute build/dual_sha256_linkage_0000.zkey build/dual_sha256_linkage_final.zkey --name="dev" -e="replace-this-randomness"
 $SNARK zkey export verificationkey build/dual_sha256_linkage_final.zkey build/verification_key.json
 
 # anyone can check the key derives from this circuit + this ptau, and that the contribution chain is intact:
-$SNARK zkey verify build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_17.ptau build/dual_sha256_linkage_final.zkey
+$SNARK zkey verify build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_final.zkey
 ```
 
 > **Phase 2 above is a single contribution and is development-only.** Groth16 needs a *circuit-specific* phase
@@ -109,4 +111,5 @@ Set `LINKED_JIT_VK_PATH=build/verification_key.json` on the reference server to 
 
 ## Public signals
 
-`public.json` is 512 bit signals: the 256 big-endian bits of `hold_hash`, followed by the 256 big-endian bits of `leg_hash`. This is the same encoding as `hashToBitSignals()` in the protocol package.
+`public.json` is four field elements — `hold_hi, hold_lo, leg_hi, leg_lo` — the same encoding as
+`hashToLimbSignals()` in the protocol package (see *Public inputs*, above).

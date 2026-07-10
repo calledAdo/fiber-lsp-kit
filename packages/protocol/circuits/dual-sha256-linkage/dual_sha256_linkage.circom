@@ -2,18 +2,22 @@ pragma circom 2.0.0;
 
 include "circomlib/circuits/sha256/sha256.circom";
 include "circomlib/circuits/bitify.circom";
+include "circomlib/circuits/poseidon.circom";
 
-// Domain-separated dual-sha256 linkage (LSPS-Fiber JIT).
+// Single-node JIT linkage (LSPS-Fiber).
 // Both invoice preimages are kept to 32 bytes so a live FNN node can settle them.
 // Proves knowledge of a private 32-byte secret S such that:
-//   leg_hash  = sha256(S)                             (leg invoice; preimage is S)
-//   hold_hash = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
-//                                                      (customer hold invoice; preimage is sha256(TAG||S))
-// The TAG is essential: without it the hold preimage would be sha256(S) = the public leg_hash.
+//   leg_hash  = sha256(S)              (leg invoice;  preimage is S)
+//   hold_hash = sha256(poseidon(S))    (hold invoice; preimage is poseidon(S))
 //
-// Each 256-bit hash is exposed as two 128-bit big-endian limbs rather than 256 bit signals. That keeps
-// nPublic at 4 instead of 512, which shrinks the verification key (its IC has nPublic+1 group elements)
-// and makes verification a 5-point multi-scalar multiplication instead of a 513-point one.
+// Only the two invoice hashes must be SHA-256 — FNN computes payment_hash that way. The derivation
+// poseidon(S) is ours to choose and carries no security weight: reaching hold_preimage means inverting a
+// SHA-256 (either hold_hash, or leg_hash to recover S). Poseidon is used because it costs ~250 constraints
+// instead of ~30k for a SHA-256 block, which halves the FFT domain and the proving key. It only has to be
+// deterministic and distinct from sha256(S), or hold_preimage would equal the public leg_hash.
+//
+// Each 256-bit hash is exposed as two 128-bit big-endian limbs rather than 256 bit signals, keeping nPublic
+// at 4 instead of 512 (the verifying key's IC carries nPublic + 1 group elements).
 
 template DualSha256Linkage() {
     signal input secret[32];  // private bytes
@@ -23,8 +27,6 @@ template DualSha256Linkage() {
     signal input hold_lo;
     signal input leg_hi;
     signal input leg_lo;
-
-    var HOLD_TAG[20] = [76, 83, 80, 83, 45, 70, 73, 66, 69, 82, 47, 74, 73, 84, 47, 72, 79, 76, 68, 0];
 
     component secretBits[32];
     for (var s = 0; s < 32; s++) {
@@ -40,23 +42,29 @@ template DualSha256Linkage() {
         }
     }
 
-    // hold inner: sha256(TAG_HOLD || S)  ((20 + 32) bytes = 416 bits) -> 32-byte hold preimage
-    component holdInner = Sha256(416);
-    for (var hb = 0; hb < 20; hb++) {
-        for (var hbit = 0; hbit < 8; hbit++) {
-            holdInner.in[hb * 8 + hbit] <== (HOLD_TAG[hb] >> (7 - hbit)) & 1;
-        }
-    }
-    for (var i = 0; i < 32; i++) {
-        for (var bit = 0; bit < 8; bit++) {
-            holdInner.in[(20 + i) * 8 + bit] <== secretBits[i].out[7 - bit];
-        }
+    // S as two 128-bit big-endian limbs (a 32-byte value exceeds the BN254 field).
+    component sHi = Bits2Num(128);
+    component sLo = Bits2Num(128);
+    for (var b = 0; b < 128; b++) {
+        sHi.in[b] <== secretBits[15 - (b \ 8)].out[b % 8];
+        sLo.in[b] <== secretBits[31 - (b \ 8)].out[b % 8];
     }
 
-    // hold_hash = sha256(hold preimage)
+    // hold_preimage = poseidon(S), encoded big-endian into 32 bytes (top two bits are zero: out < p < 2^254).
+    component pos = Poseidon(2);
+    pos.inputs[0] <== sHi.out;
+    pos.inputs[1] <== sLo.out;
+
+    component posBits = Num2Bits_strict();
+    posBits.in <== pos.out;
+
     component holdOuter = Sha256(256);
-    for (var k = 0; k < 256; k++) {
-        holdOuter.in[k] <== holdInner.out[k];
+    for (var j = 0; j < 256; j++) {
+        if (j < 2) {
+            holdOuter.in[j] <== 0;
+        } else {
+            holdOuter.in[j] <== posBits.out[255 - j];
+        }
     }
 
     // Pack each digest into two 128-bit big-endian limbs. Sha256.out[0] is the MSB of byte 0, while

@@ -1,26 +1,30 @@
 /**
- * Domain-separated dual-sha256 linkage — trustless single-node JIT without blake2b circuits, and
- * settleable through a real FNN node.
+ * Linked hold/leg hashes for single-node JIT — no blake2b circuit needed, and settleable through a real
+ * FNN node.
  *
  * FNN invoice preimages are a fixed 32-byte `Hash256` (payment_hash = sha256/blake2b of exactly 32 bytes), so
- * every preimage here is kept to 32 bytes while preserving the linkage guarantee, using one algorithm
- * (sha256) throughout:
+ * every preimage here is kept to 32 bytes:
  *
- *   leg_preimage  = S                          →  B = sha256(S)                     (merchant leg invoice)
- *   hold_preimage = sha256(TAG_HOLD || S)       →  A = sha256(hold_preimage)         (customer hold invoice)
+ *   leg_preimage  = S                →  B = sha256(S)              (merchant leg invoice)
+ *   hold_preimage = poseidon(S)      →  A = sha256(hold_preimage)  (customer hold invoice)
  *
  * Both preimages are 32 bytes, so both invoices issue and settle on a real node. A ≠ B, so one node holds
  * under A and pays under B with no collision. The leg preimage is S itself, so paying the leg reveals S and
- * the LSP derives hold_preimage = sha256(TAG_HOLD||S) with no merchant reveal RPC on the honest path. The
- * TAG_HOLD is essential: without it hold_preimage would be sha256(S) = the *public* leg hash B, letting
- * anyone settle the customer hold. The ZK statement is ∃S : sha256(S)=B ∧ sha256(sha256(TAG_HOLD||S))=A —
- * three SHA-256 blocks, still practical Groth16.
+ * the LSP derives hold_preimage = poseidon(S) with no merchant reveal RPC on the honest path.
+ *
+ * Only the two *invoice* hashes must be SHA-256 (FNN computes payment_hash that way). The derivation is ours
+ * to choose, and it carries no security weight: hold_preimage stays unpredictable because reaching it means
+ * inverting a SHA-256 — either A directly, or B to recover S. So Poseidon is used purely because it is cheap
+ * in-circuit (~250 constraints vs ~30k for a SHA-256 block), which keeps the proving key small. It must only
+ * be deterministic, 32-byte valued, and distinct from sha256(S) — otherwise hold_preimage would equal the
+ * *public* leg hash B and anyone could settle the customer hold.
+ *
+ * The ZK statement is ∃S : sha256(S)=B ∧ sha256(poseidon(S))=A — two SHA-256 blocks.
  */
 import { createHash } from "node:crypto";
+import { poseidon2 } from "poseidon-lite";
 import type { LinkageProof, LinkageVerifier } from "./linkage.js";
 
-/** Domain tag prepended to S for the customer hold preimage (hashed to 32 bytes). */
-export const JIT_LINK_HOLD_TAG = "LSPS-FIBER/JIT/HOLD\0";
 /** Length of the random secret S (bytes). It is also the leg preimage. */
 export const JIT_LINK_SECRET_BYTES = 32;
 
@@ -28,13 +32,13 @@ export const EXPOSED_SECRET_SCHEME = "exposed-secret";
 export const GROTH16_DUAL_SHA256_SCHEME = "groth16-dual-sha256";
 
 export interface DualSha256Hashes {
-  /** sha256(sha256(TAG_HOLD || S)) — hold invoice hash (customer pays). */
+  /** sha256(poseidon(S)) — hold invoice hash (customer pays). */
   hold: string;
   /** sha256(S) — leg invoice hash (LSP forwards). */
   leg: string;
   /** Leg preimage = S (32 bytes). Merchant issues the leg invoice with this + hash_algorithm sha256. */
   legPreimage: string;
-  /** Hold preimage = sha256(TAG_HOLD || S) (32 bytes). LSP settles the hold with this. */
+  /** Hold preimage = poseidon(S) (32 bytes). LSP settles the hold with this. */
   holdPreimage: string;
 }
 
@@ -60,15 +64,6 @@ function eq(x: string, y: string): boolean {
   return x.toLowerCase() === y.toLowerCase();
 }
 
-/** Build a tagged preimage: UTF-8 tag bytes || secret bytes. */
-export function taggedPreimage(tag: string, secret: Uint8Array): Uint8Array {
-  const tagBytes = new TextEncoder().encode(tag);
-  const out = new Uint8Array(tagBytes.length + secret.length);
-  out.set(tagBytes, 0);
-  out.set(secret, tagBytes.length);
-  return out;
-}
-
 /** The leg preimage is S itself (32 bytes) — a live FNN node can settle with it directly. */
 export function deriveLegPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
@@ -77,12 +72,23 @@ export function deriveLegPreimageBytes(secret: Uint8Array): Uint8Array {
   return secret.slice();
 }
 
-/** Derive the 32-byte hold preimage sha256(TAG_HOLD || S) from secret bytes. */
+/**
+ * Derive the 32-byte hold preimage `poseidon(S)` from secret bytes.
+ *
+ * S is split into two 128-bit big-endian limbs (a 32-byte value exceeds the BN254 field), fed to
+ * `Poseidon(2)`, and the field element is encoded big-endian into 32 bytes. This must match
+ * `dual_sha256_linkage.circom` exactly — a divergence makes the circuit unsatisfiable, so a mismatch fails at
+ * proof generation rather than after the merchant leg has been paid.
+ */
 export function deriveHoldPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
     throw new Error(`JIT secret must be ${JIT_LINK_SECRET_BYTES} bytes`);
   }
-  return toBytes(sha256Hex(taggedPreimage(JIT_LINK_HOLD_TAG, secret)));
+  const hex = [...secret].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hi = BigInt("0x" + hex.slice(0, 32));
+  const lo = BigInt("0x" + hex.slice(32));
+  const out = poseidon2([hi, lo]);
+  return toBytes("0x" + out.toString(16).padStart(64, "0"));
 }
 
 /** The leg preimage is S directly; return it when it is a well-formed 32-byte value, else null. */
@@ -91,14 +97,14 @@ export function extractSecretFromLegPreimage(legPreimage: Uint8Array): Uint8Arra
   return legPreimage.slice();
 }
 
-/** Derive the hold preimage from the leg preimage (= S) using the public tag mapping. */
+/** Derive the hold preimage from the leg preimage (= S) using the public derivation. */
 export function deriveHoldPreimageFromLeg(legPreimageHex: string): string | null {
   const secret = extractSecretFromLegPreimage(toBytes(legPreimageHex));
   if (!secret) return null;
   return toHex(deriveHoldPreimageBytes(secret));
 }
 
-/** Both invoice hashes + tagged preimages for a 32-byte secret (hex or bytes). */
+/** Both invoice hashes + their 32-byte preimages, for a 32-byte secret (hex or bytes). */
 export function dualSha256(secret: Uint8Array | string): DualSha256Hashes {
   const s = typeof secret === "string" ? toBytes(secret) : secret;
   const leg = deriveLegPreimageBytes(s);
@@ -130,7 +136,7 @@ export function verifyDualSha256Linkage(
 }
 
 /**
- * Fraud proof when the leg preimage settles B but does not map to hold hash A under the domain tag.
+ * Fraud proof when the leg preimage settles B but does not map to hold hash A under the derivation.
  * Returns (A, B, leg_preimage) for bond slashing / audit.
  */
 export function fraudEvidenceDualSha256(
