@@ -166,7 +166,7 @@ export const exposedSecretVerifier: LinkageVerifier = {
   },
 };
 
-/** Groth16 proof payload: snarkjs-format proof JSON + public signals (decimal strings). */
+/** Groth16 proof payload: circom-format proof JSON + public signals (decimal strings). */
 export interface Groth16DualSha256ProofPayload {
   proof: unknown;
   publicSignals: string[];

@@ -69,15 +69,16 @@ curl -O https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_16.pta
 # sha256: 1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922
 cd ..
 
-SNARK=../../../../node_modules/.bin/snarkjs
+# The setup toolchain is a build-time dependency only — the kit itself ships no proof-system library.
+SETUP="npx --yes snarkjs@0.7.6"
 circom dual_sha256_linkage.circom --r1cs --wasm --sym -l ../../../../node_modules -o build
-$SNARK r1cs info build/dual_sha256_linkage.r1cs
-$SNARK groth16 setup build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_0000.zkey
-$SNARK zkey contribute build/dual_sha256_linkage_0000.zkey build/dual_sha256_linkage_final.zkey --name="dev" -e="replace-this-randomness"
-$SNARK zkey export verificationkey build/dual_sha256_linkage_final.zkey build/verification_key.json
+$SETUP r1cs info build/dual_sha256_linkage.r1cs
+$SETUP groth16 setup build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_0000.zkey
+$SETUP zkey contribute build/dual_sha256_linkage_0000.zkey build/dual_sha256_linkage_final.zkey --name="dev"
+$SETUP zkey export verificationkey build/dual_sha256_linkage_final.zkey build/verification_key.json
 
 # anyone can check the key derives from this circuit + this ptau, and that the contribution chain is intact:
-$SNARK zkey verify build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_final.zkey
+$SETUP zkey verify build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/dual_sha256_linkage_final.zkey
 ```
 
 > **Phase 2 above is a single contribution and is development-only.** Groth16 needs a *circuit-specific* phase
@@ -93,10 +94,28 @@ Use `scripts/linkage-witness-input.mjs` (repo root) to generate `input.json` fro
 
 ```bash
 node ../../../../scripts/linkage-witness-input.mjs 0x<64-char-secret-hex> > input.json
-../../../../node_modules/.bin/snarkjs wtns calculate build/dual_sha256_linkage_js/dual_sha256_linkage.wasm input.json witness.wtns
-../../../../node_modules/.bin/snarkjs groth16 prove build/dual_sha256_linkage_final.zkey witness.wtns proof.json public.json
-../../../../node_modules/.bin/snarkjs groth16 verify build/verification_key.json public.json proof.json
+
+# circom's generated witness calculator is CommonJS, but it lands inside a package whose package.json sets
+# "type": "module". Mark the generated directory once, after building the circuit:
+echo '{ "type": "commonjs" }' > build/dual_sha256_linkage_js/package.json
+
+# Witness: circom emits a dependency-free calculator alongside the .wasm. No proof library needed.
+node build/dual_sha256_linkage_js/generate_witness.js \
+  build/dual_sha256_linkage_js/dual_sha256_linkage.wasm input.json witness.wtns
 ```
+
+Then prove with whichever Groth16 prover you run. The proof is three group elements — the LSP cannot tell which
+implementation produced it, and does not care.
+[`ark-circom`](https://github.com/arkworks-rs/circom-compat) is the default (pure Rust, no native dependencies);
+[`rapidsnark`](https://github.com/iden3/rapidsnark) is faster and leaner but needs `gmp` and `nasm` to build:
+
+```bash
+# rapidsnark, for example:
+prover build/dual_sha256_linkage_final.zkey witness.wtns proof.json public.json
+```
+
+Verify locally with `verifyGroth16Bn254` from `@fiberlsp/protocol` — the same pairing check the LSP runs, over
+`@noble/curves`, needing only `verification_key.json`.
 
 Post the proof to the LSP as:
 

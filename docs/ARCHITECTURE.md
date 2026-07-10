@@ -309,8 +309,8 @@ honest key**. Two consequences follow, and they are easy to conflate:
 - **A reproducible build does not make the setup trustless.** Publishing the build so anyone can re-derive the
   artifacts proves the `.zkey`/vk match the published circuit — it rules out a backdoored circuit or a
   mismatched key, and it is worth doing. It says nothing about whether the setup's secret was destroyed, because
-  that secret is never a build input. `snarkjs zkey verify` likewise checks derivation and the contribution
-  chain, not deletion.
+  that secret is never a build input. The ceremony's own `zkey verify` step likewise checks derivation and the
+  contribution chain, not deletion.
 - **Security rests on at least one honest contributor** in each of Groth16's two phases.
 
 Phase 1 is handled: the build uses the **public Perpetual Powers of Tau**, which has many independent
@@ -358,28 +358,35 @@ The `.zkey` and vk must be a matched pair from the same setup and circuit.
 Applies to `linked` only. The asymmetry is uncomfortable and is the reason `same_hash` exists: the party with no
 capital carries the bulky computation, and the party risking money carries the 4 KB key that guards it.
 
-The prover is a swappable program, not part of the protocol: `proveLinkage` is an injected hook. Measured on one
-12-core machine over the same circuit (59,771 constraints, 2^16 domain), the same `.zkey` and the same witness.
-All three emit **identical public signals**, and proofs from each verify against the same key — so this is one
-statement proven three ways:
+**The prover is not part of the protocol.** A Groth16 proof is three group elements; proofs from different
+implementations of the same circuit are indistinguishable, and the LSP neither knows nor cares which one ran.
+`proveLinkage` is an injected hook, so this is a purely local merchant choice.
+
+Measured on one 12-core machine over the same circuit (59,771 constraints, 2^16 domain), the same `.zkey`, and
+the same witness. Both emit **identical public signals**, and proofs from each verify against the same key:
 
 | Prover | Prove | Peak RSS | Needs |
 |---|---|---|---|
-| [`rapidsnark`](https://github.com/iden3/rapidsnark) (C++/asm) | **0.15 s** | **61 MB** | `gmp`, `nasm` |
-| [`ark-circom`](https://github.com/arkworks-rs/circom-compat) (Rust) | 0.12 s + 0.9 s key load | 95 MB | nothing native |
-| `snarkjs` (JS/wasm) | 1.35 s | **962 MB** | nothing |
+| [`ark-circom`](https://github.com/arkworks-rs/circom-compat) (Rust) — **default** | 0.12 s + 0.9 s key load | 95 MB | nothing native |
+| [`rapidsnark`](https://github.com/iden3/rapidsnark) (C++/asm) — opt-in | **0.15 s** | **61 MB** | `gmp`, `nasm` to build |
 
-`rapidsnark`'s figure is the whole process, key load included — it memory-maps the `.zkey` rather than parsing
-it. `ark-circom` needs one build step to get there: its `read_zkey` validates every curve point (4.5 s), so
-convert the key once into arkworks' native serialization and reload with validation off. Both are ~10× faster
-and ~10× smaller than snarkjs. Neither changes the curve, the circuit, the key, or the trust assumption.
+`ark-circom` is the default because it has **no native dependencies**: pure Rust, builds anywhere Rust does, and
+targets wasm. `rapidsnark` is faster and 34 MB leaner — it memory-maps the `.zkey` rather than parsing it, and
+its figure is the whole process including key load — but it needs `gmp` and `nasm` at build time. Take it when
+you control the deployment and memory is tight (a 128 MB serverless tier, mobile). Neither changes the curve,
+the circuit, the key, or the trust assumption.
 
-**The ~950 MB was a snarkjs number, not a Groth16 number.** Per-phase `VmHWM` in the Rust prover locates the real
-working set: 55 MB for the proving key, +3 MB for the witness, +36 MB of prover scratch. The excess is
-`ffjavascript`'s wasm linear memory (which grows and is never returned) plus un-GC'd V8 typed arrays.
+Two build steps get `ark-circom` to the 95 MB above; skip them and it costs **222 MB and 5.0 s** instead:
 
-Parallelism is not the lever anywhere. One core leaves RSS flat in all three and costs snarkjs and `ark-circom`
-~3-4× wall time; `rapidsnark` does not move at all at this circuit size.
+- Its `read_zkey` validates every curve point (4.5 s). Convert the key once into arkworks' native serialization
+  and reload with validation off — 0.9 s, then cached in memory.
+- Its built-in witness generation runs `wasmer`, whose JIT alone is ~140 MB. Feed a pre-generated `.wtns`
+  instead. Witness generation needs no proof library at all: circom emits a dependency-free
+  `witness_calculator.js`.
+
+Per-phase `VmHWM` locates the real working set: 55 MB for the proving key, +3 MB for the witness, +36 MB of
+prover scratch. Parallelism is not a lever — one core leaves RSS flat and costs `ark-circom` ~3-4× wall time,
+while `rapidsnark` does not move at this circuit size.
 
 Read it against the right denominator, too: a JIT order exists to bring a channel into being, and once it exists
 subsequent sales are ordinary routed payments over it. The cost is paid per channel-open, not per checkout.
@@ -396,13 +403,11 @@ The `.zkey` itself does not shrink. It is `f(nVars, domainSize)` — a property 
 ### Verification
 
 The LSP's verifier is `verifyGroth16Bn254` in `@fiberlsp/protocol`: the Groth16 pairing equation over BN254,
-with [`@noble/curves`](https://github.com/paulmillr/noble-curves) as its only dependency. It reads snarkjs-format
-keys and proofs, which is also what `rapidsnark` emits.
+with [`@noble/curves`](https://github.com/paulmillr/noble-curves) as its only dependency. It reads the standard
+circom Groth16 JSON that every prover above emits, and it verifies a proof in ~50 ms against a 4 KB key.
 
-It is not the fastest option — snarkjs verifies a warm proof in ~8 ms against ~50 ms here — but snarkjs costs
-239 MB of resident wasm to do so, against 73 MB, and a JIT order is a channel-open, not a hot path. The kit
-therefore has **no proof-system dependency at all**: snarkjs is needed only to *run a ceremony*, and the ceremony
-scripts invoke it through a pinned `npx`.
+The kit therefore carries **no proof-system dependency on either side**. A JIT order is a channel-open, not a hot
+path, so 50 ms is free; the memory a faster wasm verifier would resident (hundreds of MB) is not.
 
 Two rejections matter more than the timing, and both are pinned by tests:
 

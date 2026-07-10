@@ -2,7 +2,7 @@
  * Groth16 verification over BN254, with no proof-system dependency.
  *
  * The LSP verifies a linkage proof before it funds a channel and pays a merchant, so this is the code that
- * guards its money. It is deliberately small: parse a snarkjs-format verification key and proof, then check the
+ * guards its money. It is deliberately small: parse a circom-format verification key and proof, then check the
  * single pairing equation. The only dependency is `@noble/curves` for BN254 arithmetic.
  *
  * The equation Groth16 verification reduces to is
@@ -12,9 +12,9 @@
  * which is checked in the equivalent product form `e(-A, B) · e(alpha, beta) · e(vk_x, gamma) · e(C, delta) = 1`
  * so that a single batched Miller loop and one final exponentiation suffice.
  *
- * Key/proof shape is snarkjs's JSON: G1 points are `[x, y, z]` decimal strings, G2 points are
+ * Key/proof shape is the standard circom Groth16 JSON: G1 points are `[x, y, z]` decimal strings, G2 are
  * `[[x0, x1], [y0, y1], [z0, z1]]`, both in Jacobian-style projective form where a valid point always has
- * `z = 1` (snarkjs normalises before serialising). Anything else is rejected rather than normalised — a
+ * `z = 1` (every prover normalises before serialising). Anything else is rejected rather than normalised — a
  * verifier should not be in the business of repairing malformed input.
  */
 import { bn254 } from "@noble/curves/bn254.js";
@@ -22,7 +22,7 @@ import { bn254 } from "@noble/curves/bn254.js";
 const { G1, G2, fields, pairingBatch } = bn254;
 const Fp12 = fields.Fp12;
 
-/** snarkjs `verification_key.json` (Groth16, bn128). Only the fields verification actually reads. */
+/** A circom Groth16 `verification_key.json` (bn128). Only the fields verification actually reads. */
 export interface Groth16VerificationKey {
   protocol?: string;
   curve?: string;
@@ -34,7 +34,7 @@ export interface Groth16VerificationKey {
   IC: string[][];
 }
 
-/** snarkjs Groth16 proof JSON. */
+/** A circom Groth16 proof JSON, as emitted by any conforming prover. */
 export interface Groth16Proof {
   protocol?: string;
   curve?: string;
@@ -52,7 +52,7 @@ function fp(value: string): bigint {
   return v;
 }
 
-/** A G1 point from snarkjs's `[x, y, z]`. Requires the affine form (`z = 1`). */
+/** A G1 point from `[x, y, z]`. Requires the affine form (`z = 1`). */
 function g1(point: string[] | undefined): InstanceType<typeof G1.Point> {
   if (!Array.isArray(point) || point.length < 3) throw new Error("malformed G1 point");
   if (BigInt(point[2]!) !== 1n) throw new Error("G1 point is not normalised (z != 1)");
@@ -61,7 +61,7 @@ function g1(point: string[] | undefined): InstanceType<typeof G1.Point> {
   return p;
 }
 
-/** A G2 point from snarkjs's `[[x0, x1], [y0, y1], [z0, z1]]`. Requires the affine form. */
+/** A G2 point from `[[x0, x1], [y0, y1], [z0, z1]]`. Requires the affine form. */
 function g2(point: string[][] | undefined): InstanceType<typeof G2.Point> {
   if (!Array.isArray(point) || point.length < 3) throw new Error("malformed G2 point");
   const [z0, z1] = point[2]!;
@@ -79,7 +79,7 @@ function g2(point: string[][] | undefined): InstanceType<typeof G2.Point> {
 }
 
 /**
- * Verify a Groth16 proof against a snarkjs verification key. Returns false on any malformed input rather than
+ * Verify a Groth16 proof against a circom verification key. Returns false on any malformed input rather than
  * throwing — a bad proof and an unparseable proof are the same answer to the caller.
  */
 export function verifyGroth16Bn254(

@@ -80,7 +80,7 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   **`same_hash`** gives the LSP a second node — one holds, one pays — and both legs carry one hash. There is
   nothing to prove: **no proving key, no circuit, no trusted setup**, and the merchant ships a single `sha256`.
   **`linked`** is for a single-node LSP: the two hashes must differ, so the merchant proves in zero knowledge
-  that they share a secret (Groth16), which costs it a 37 MB artifact download.
+  that they share a secret (Groth16), which costs it a 37 MB artifact download and any Groth16 prover it likes.
   Merchants prefer `same_hash` automatically when it is offered. See
   [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).
 - **Leasing.** After activation, **streaming** rent is paid in the **channel's own asset** by keysend out of
