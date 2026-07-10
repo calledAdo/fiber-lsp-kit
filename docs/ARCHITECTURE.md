@@ -262,12 +262,41 @@ generated `.zkey`/`.ptau`/`.wasm`/vk files are git-ignored. Integrators do not r
 artifacts, which should ship as release assets with content hashes (the `.zkey` is tens of megabytes) alongside
 a reproducible build and the setup transcript.
 
-| Role | Files | Trust |
-|---|---|---|
-| Merchant (prover) | `dual_sha256_linkage.wasm` + final `.zkey` | none — pure computation, safe to publish |
-| LSP (verifier) | `verification_key.json` | inherits the setup's trust (see above) |
+| Role | Files | Size | Trust |
+|---|---|---|---|
+| Merchant (prover) | `dual_sha256_linkage.wasm` + final `.zkey` | 2.2 MB + 35 MB | none — pure computation, safe to publish |
+| LSP (verifier) | `verification_key.json` | 4 KB | inherits the setup's trust (see above) |
 
 The `.zkey` and vk must be a matched pair from the same setup and circuit.
+
+### Prover footprint
+
+The asymmetry is deliberate: the party with no capital carries the bulky computation, and the party risking
+money carries the 4 KB key that guards it. Measured for the shipped circuit (59,771 constraints, 2^16 domain)
+with snarkjs on Node:
+
+| Step | Time | Peak RSS |
+|---|---|---|
+| witness generation (the 2.2 MB wasm) | 0.5 s | 94 MB |
+| Groth16 prove (the 35 MB zkey) | 2.9 s | **~950 MB** |
+
+**Proving is the whole cost.** The wasm and snarkjs's install size are not the lever, and neither is
+parallelism: capping the prover to one core holds RSS at ~930 MB while tripling wall time, because the memory
+is field-arithmetic buffers on the main thread rather than per-worker copies. There is no tuning knob.
+
+Two ways to cut it, neither needing a protocol change:
+
+- **Swap the prover.** `proveLinkage` is an injected hook, so a merchant may drive a native Groth16 prover over
+  the same `.zkey` and witness instead of snarkjs.
+- **Prove off the serving path.** The statement mentions only `S` — not the amount, the customer, or the expiry
+  — so proofs can be generated ahead of time and consumed at checkout through the `randomBytes` and
+  `proveLinkage` hooks. The serving process then loads no proving key at all.
+
+The circuit itself cannot shrink. Both invoice hashes must be SHA-256 in-circuit, because FNN computes
+`payment_hash` that way and the proof has to bind *both* public hashes to one secret — so two SHA-256 blocks
+(~59k constraints) is the floor for any hash-lock construction. Poseidon already eliminated the one optional
+block: it inlines its round constants, costing 1.6 MB of extra wasm to save 16 MB of proving key and a quarter
+of the proving time. PTLCs would remove the SNARK entirely.
 
 ### Latency
 
