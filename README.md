@@ -24,7 +24,7 @@ conforming implementation.
 ## The gap we fill
 
 You can only receive what someone has funded *toward* you. A new wallet has **zero inbound** → it can't be
-paid. Per-asset inbound is scarce on testnet — of **807 public channels**, only **6** carry RUSD. So a
+paid. Per-asset inbound is scarce on testnet — only a **handful** of the public channels carry RUSD. So a
 merchant that wants a stablecoin is unreachable until an LSP opens a public RUSD channel to it — **that
 provisioning, plus the merchant tooling to run on it, is this kit.**
 
@@ -36,7 +36,7 @@ provisioning, plus the merchant tooling to run on it, is this kit.**
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
 | `@fiberlsp/server` | Reference LSP engine + REST API, `JitService` in both `linked` and `same_hash` modes, and server-side merchant invoice-webhook service. |
-| `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: ESM witness generation plus any circom-compatible prover binary. Not needed for `same_hash`. |
+| `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: in-process witness generation + a bundled WebAssembly prover (pure `npm i`, no binary), with an optional native-subprocess backend for speed. Not needed for `same_hash`. |
 | `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `registry/providers.json` | Git-hosted provider registry file; providers can be added by PR, and merchants can download or bundle it. |
 | `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |
@@ -81,7 +81,8 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   **`same_hash`** gives the LSP a second node — one holds, one pays — and both legs carry one hash. There is
   nothing to prove: **no proving key, no circuit, no trusted setup**, and the merchant ships a single `sha256`.
   **`linked`** is for a single-node LSP: the two hashes must differ, so the merchant proves in zero knowledge
-  that they share a secret (Groth16), which costs it a 37 MB artifact download and any Groth16 prover it likes.
+  that they share a secret (Groth16), which costs it an ~18 MB artifact download (key + circuit) and a bundled
+  wasm prover that installs with `npm i` — no binary, no native toolchain.
   Merchants prefer `same_hash` automatically when it is offered. See
   [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).
 - **Leasing.** After activation, **streaming** rent is paid in the **channel's own asset** by keysend out of

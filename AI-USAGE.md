@@ -12,9 +12,9 @@ an honest account of where AI helped and where human judgement + real testnet ru
 ## Where the human loop did the real work
 
 The design of an LSP for Fiber turns entirely on how FNN's `open_channel` actually behaves — and that was
-established by **reading the FNN v0.9 source and running two live nodes on CKB testnet**, not by trusting a
-generated guess. That regime found and fixed six concrete integration issues that no amount of
-armchair reasoning would have surfaced:
+established by **reading the FNN v0.9 source and running up to four live nodes on CKB testnet** (LSP hold node,
+LSP paying node, merchant, and a routing node), not by trusting a generated guess. That regime found and fixed
+six concrete integration issues that no amount of armchair reasoning would have surfaced:
 
 1. **`node_info` returns `pubkey`** (not `node_id`/`public_key`); `new_invoice`'s `payment_hash` is nested
    under `invoice.data`.
@@ -40,4 +40,7 @@ Several of these are written up as upstream reports in
 - `npm run test:live` re-checks the real RPC surface against a running node.
 - The live provision → invoice → routed pay → stream-rent flow is reproducible via `scripts/demo/`.
 - JIT behaviour (hold, settle, refund, hold-window semantics) was spiked live against a node before the kit
-  code was written; the shipped path is the single-node linked-hash design in spec §6.
+  code was written. Live testing also surfaced that a **single** FNN node holding and paying one hash silently
+  loses funds ([finding #5](./docs/upstream-fiber-findings.md)), which is why the kit ships **two** JIT modes:
+  `same_hash` (two LSP nodes, no proof — the default when offered) and `linked` (one node, Groth16 linkage
+  proof). Both are described in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).

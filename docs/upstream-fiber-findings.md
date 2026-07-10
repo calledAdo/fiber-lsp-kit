@@ -5,6 +5,10 @@ channel-opening, streaming-rent, and hold-invoice JIT paths, and hit several rou
 upstream. These are **drafts** to file at [nervosnetwork/fiber](https://github.com/nervosnetwork/fiber);
 each has a minimal repro.
 
+The bug repros were measured on **v0.9.0-rc5**; re-verify against the target release before filing. The
+upstream-state notes below (RPC surfaces, roadmap items) were re-checked against the **`develop`** branch on
+2026-07-10.
+
 ---
 
 ## 1. Redundant `connect_peer` can crash the acceptor's gossip actor (`ActorAlreadyRegistered`)
@@ -24,8 +28,8 @@ stops completing the Fiber `Init` handshake for that peer, so a subsequent `open
 **Expected.** `connect_peer` to an already-connected peer should be a no-op (idempotent), not panic an
 actor.
 
-**Workaround we adopted.** `provision()` calls `list_peers` first and skips `connect_peer` when already
-peered.
+**Workaround we adopted.** Our channel-open helper (`openChannelAndAwait`, used by both the prepaid and JIT
+paths) calls `list_peers` first and skips `connect_peer` when already peered.
 
 ---
 
@@ -106,8 +110,10 @@ graph capability with registry endpoints today and would collapse onto the graph
 
 **What happens.** When an outgoing payment settles, the paying node cryptographically *learns the
 preimage* (the TLC fulfillment carries it), but `get_payment` returns only
-`{ payment_hash, status, created_at, last_updated_at, failed_error, fee, custom_records }` — the preimage
-is in the node's store yet unreachable over RPC.
+`{ payment_hash, status, created_at, last_updated_at, failed_error, fee, custom_records, routers }` — the
+preimage is in the node's store yet unreachable over RPC. (Still absent on the `develop` RPC README as of
+2026-07-10; the `routers` field has since been added, so the surface is being extended — just not with the
+preimage.)
 
 **Why it matters.** Hold-invoice choreography (LSPS2-style JIT, submarine-swap-like flows) needs the
 forwarder to *relay* the preimage: node B pays `invoice(H)`, learns `P`, and a coordinating process calls
@@ -160,11 +166,18 @@ Reading `channel.rs` confirms it: for a hold invoice the hold expiry is `min(inv
 partial sets on preimage-known invoices.
 
 **Why it matters.** This is a *feature* — a generous, caller-controlled hold window is exactly what makes
-hold-invoice provisioning (a JIT channel's on-chain open takes minutes) viable — but nothing documents it,
-and the constant's name invites the wrong conclusion.
+hold-invoice provisioning (a JIT channel's on-chain open takes minutes) viable — but the window semantics are
+undocumented and the constant's name invites the wrong conclusion.
 
-**Ask.** Document hold-invoice semantics (window = invoice expiry; `settle_invoice`/`cancel_invoice`
-lifecycle; `Received` state) in the RPC README.
+**Upstream state (checked against `develop`, 2026-07-10).** The RPC README now *does* document the basic
+hold-invoice lifecycle — a `payment_hash`-only invoice as a hold invoice ("the tlc must be accepted and held
+until the preimage becomes known"), `settle_invoice` / `cancel_invoice`, and the `Received` status. So the
+lifecycle half of this finding is largely addressed. What is still undocumented is the **window**.
+
+**Ask (narrowed).** Document that a hold TLC lives until the **invoice expiry** (`min(invoice expiry, TLC
+expiry)`), and that `DEFAULT_HOLD_TLC_TIMEOUT` (120 s) bounds only **MPP partial sets** on preimage-known
+invoices — it is *not* the hold window. As written, the constant's name reads as the hold ceiling and misleads
+integrators into under-sizing hold invoices.
 
 ---
 
@@ -216,8 +229,15 @@ and fulfilling A (revealing `a`) automatically yields the opener of B (`a + t`).
 elliptic-curve check, no SNARK, no bond. Single-node JIT (and cross-currency swaps, and multi-hop privacy)
 all get simpler.
 
-**Ask.** Track PTLC / adaptor-signature TLCs on the Fiber roadmap. Bitcoin Lightning is making the same
-HTLC→PTLC move; CKB's Schnorr-friendly stack makes it natural here too.
+**Upstream state (checked 2026-07-10).** Fiber already lists the HTLC→PTLC migration in its cross-chain-hub
+future plan ([discussion #1243](https://github.com/nervosnetwork/fiber/discussions/1243)) and is keeping the
+CCH interface hash-algorithm-agnostic to ease it — but it is **not implemented**: the `develop` TLC types are
+still hash locks (`payment_hash` + `HashAlgorithm ∈ { CkbHash, Sha256 }`), and there is no adaptor-signature
+lock. So the direction is acknowledged; the work is not yet done.
+
+**Ask.** Prioritize adaptor-signature TLCs. Single-node trustless JIT (above) is one concrete construction
+that a point-lock unlocks — the A↔B linkage collapses from a Groth16 proof to a one-line `B − A = t·G` check.
+Bitcoin Lightning is making the same HTLC→PTLC move; CKB's Schnorr-friendly stack makes it natural here too.
 
 ---
 

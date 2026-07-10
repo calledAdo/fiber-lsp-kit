@@ -51,9 +51,10 @@ FIBER_RPC_URL=http://127.0.0.1:8227 LSP_PUBKEY=<node#1 pubkey> LSP_TRUST_SETTLE=
 **out-of-band** (see the honesty note in the root `README.md`). Node identities/RPCs are set at the top of each
 script and overridable via env (`LSP_PUBKEY`, `MERCHANT_RPC`, `LSP_REST`, `AMOUNT`, …).
 
-Single-node JIT is exposed by the SDK/server as `/lsp/v1/jit/*`, but this live demo folder no longer carries
-a JIT script because production JIT requires a linkage-proof verifier. See the protocol spec §6 and the
-offline JIT tests for the canonical linked-hash flow.
+JIT is exposed by the SDK/server as `/lsp/v1/jit/*` in two modes: `same_hash` (two LSP nodes, no proof) and
+`linked` (one node + a Groth16 linkage proof). This live demo folder doesn't carry a JIT script yet — running
+it needs either a second LSP node (`same_hash`) or a linkage-proof verifier (`linked`). See
+[`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) (JIT checkout) and the offline JIT tests for both flows.
 
 ## Notes
 

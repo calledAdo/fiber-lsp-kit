@@ -1,43 +1,74 @@
 # Phase-2 ceremony for the JIT linkage key
 
-The LSP verifies a Groth16 proof before it opens a channel and pays a merchant. If the proving key's setup
-secret survives, someone can forge a proof for two *unlinked* hashes — the LSP then pays the merchant leg and
-cannot settle the customer hold. That is a direct loss, so the key's provenance is the LSP's security.
+## Why this document exists
 
-This document is how the key gets a provenance worth trusting.
+Under `linked` JIT the LSP verifies a Groth16 proof before it opens a channel and pays a merchant. That proof is
+the only thing standing between the LSP and a merchant who supplies two *unlinked* hashes: if the proof can be
+forged, the LSP pays the merchant leg and then cannot settle the customer hold. It is a direct loss.
+
+Groth16's keys are derived from secret randomness. **Whoever retains that secret can forge a proof for a false
+statement, and the forgery verifies against the honest key.** So the key's provenance *is* the LSP's security,
+and this document is how the key gets a provenance worth trusting.
+
+Note who is protected. A backdoored key lets a **merchant steal from the LSP**. This ceremony is the LSP's
+assumption, not the merchant's.
+
+> **You may not need any of this.** The proof exists only because a single FNN node cannot hold and pay the same
+> payment hash. An LSP that runs **two** nodes serves `same_hash` instead: one hash on both legs, no proof, no
+> proving key, no setup, and nothing to trust. See
+> [`ARCHITECTURE.md` § The hash-lock collision](./ARCHITECTURE.md#the-hash-lock-collision). Everything below
+> applies to `linked` only.
 
 ## What is and is not already handled
 
-**Phase 1 is done.** The build uses the **public Perpetual Powers of Tau** (`powersOfTau28_hez_final_16.ptau`),
-which has many independent contributors and a published transcript. No phase-1 secret is ours.
+**Phase 1 is done.** The build uses the **public Perpetual Powers of Tau**
+(`powersOfTau28_hez_final_16.ptau`), which has many independent contributors and a published transcript. No
+phase-1 secret is ours. Never generate your own.
 
 **Phase 2 is not.** Groth16 needs a *circuit-specific* second phase, and the key shipped in this repo has a
 single contribution — ours. **It must not be trusted with real funds.**
 
-Two things that do **not** fix this, and are easy to mistake for fixes:
+Two things that look like fixes and are not:
 
-- **A reproducible build.** Re-deriving the artifacts proves the `.zkey` and vk match the published circuit. It
-  rules out a backdoored circuit. It says nothing about whether the setup's secret was destroyed, because that
-  secret is never a build input — the same artifacts appear whether or not anyone kept it.
-- **`snarkjs zkey verify`.** It proves the key derives from this circuit and this ptau, and that the
-  contribution chain is intact. It cannot prove anyone deleted anything.
+| | What it actually proves | What it cannot prove |
+|---|---|---|
+| A reproducible build | the `.zkey` and vk match the published circuit; the circuit is not backdoored | that the setup secret was destroyed — that secret is never a build input, and the same artifacts appear whether or not someone kept it |
+| `snarkjs zkey verify` | the key derives from this circuit and this ptau, and the contribution chain is intact | that anyone deleted anything |
 
 Both are necessary. Neither is sufficient. Only the ceremony below is.
 
 ## The security property
 
 Each contributor mixes in entropy only they know, then destroys it. The key is sound if **at least one**
-contributor was honest. Nobody has to trust anyone else — you only have to trust *yourself*, and any observer
-only has to believe that *one* of N people behaved. This is the assumption Zcash, Semaphore, and Tornado rest
-on. Three to five independent, publicly-named contributors is already a categorical improvement over one.
+contributor was honest.
 
-A final **beacon** removes the last contributor's privileged position: it applies a public, unpredictable value
-that did not exist while anyone was contributing, so even the last participant could not have steered the
-result.
+```text
+   coordinator        Alice            Bob            Carol         public beacon
+        │               │               │               │           (unpredictable,
+        │  contrib_0000 │               │               │            did not exist
+        ├──────────────▶│ +entropy_A    │               │            during any
+        │               ├──────────────▶│ +entropy_B    │            contribution)
+        │               │               ├──────────────▶│ +entropy_C      │
+        │               │               │               ├─────────────────┤
+        │               │               │               │                 ▼
+        │               │               │               │           final .zkey
+        │               │               │               │
+        │        each destroys their own entropy and publishes an attestation
+        │
+        └─▶ sound unless ALL of {Alice, Bob, Carol} kept their entropy AND colluded
+```
+
+Nobody has to trust anyone else. You only have to trust *yourself*; any observer only has to believe that *one*
+of N people behaved. This is the assumption Zcash, Semaphore, and Tornado rest on. Three to five independent,
+publicly-named contributors is already a categorical improvement over one.
+
+The final **beacon** removes the last contributor's privileged position. Without it, the last participant sees
+every prior contribution and could — in principle — steer the final key. A public, unpredictable value that did
+not exist while anyone was contributing makes that impossible.
 
 ## Running it
 
-Coordinator, once:
+### Coordinator, once, to start the chain
 
 ```bash
 cd packages/protocol/circuits/dual-sha256-linkage
@@ -50,21 +81,29 @@ npx --yes snarkjs@0.7.6 groth16 setup \
   build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/contrib_0000.zkey
 ```
 
-Publish `contrib_0000.zkey`, the `.r1cs`, and their SHA-256 hashes.
+Publish `contrib_0000.zkey`, the `.r1cs`, and their SHA-256 hashes. Announce the beacon *source* now — for
+example "the CKB block hash at height N" — so that no contributor can have known its value.
 
-Each contributor, independently, on a machine they control:
+`snarkjs` appears here and nowhere else. It is **setup-time tooling only**: the kit itself ships no
+proof-system library, and the LSP verifies proofs with `@noble/curves`. It is invoked through a pinned
+`npx --yes snarkjs@0.7.6` so a contribution is reproducible against a known implementation.
+
+### Each contributor, independently, on a machine they control
 
 ```bash
 ./scripts/ceremony/contribute.sh build/contrib_0000.zkey build/contrib_0001.zkey "Alice <alice@example.com>"
 ```
 
-The script takes entropy from the kernel CSPRNG mixed with characters you type (never echoed, never written to
-disk, never in the process table), contributes, prints the output hash and your attestation, and tells you to
-destroy the entropy. Publish the output zkey and the attestation, then hand the file to the next contributor.
-Contributions are chained: `0000 → 0001 → 0002 → …`.
+Check the input hash against the one the coordinator published *before* you contribute. The script takes entropy
+from the kernel CSPRNG mixed with characters you type — never echoed, never written to disk, never in the process
+table — contributes, prints the output hash and your attestation, and tells you to destroy the entropy.
 
-Coordinator, once all contributions are in — finalise against a beacon nobody could predict. Announce the
-source **before** the last contribution (e.g. "the CKB block hash at height N"), then use it:
+Publish the output zkey and your attestation, then hand the file to the next contributor. Contributions are
+chained: `0000 → 0001 → 0002 → …`.
+
+### Coordinator, once all contributions are in
+
+Finalise against the beacon whose source you announced at the start:
 
 ```bash
 ./scripts/ceremony/finalize.sh build/contrib_000N.zkey <beacon-hash-hex> 10
@@ -72,27 +111,53 @@ source **before** the last contribution (e.g. "the CKB block hash at height N"),
 
 This applies the beacon, exports `verification_key.json`, runs `zkey verify`, and prints every hash to publish.
 
+### Then cut a release
+
+```bash
+npm run release    # → dist/release/{verification_key.json, linkage.zkey.gz, linkage.wasm, MANIFEST.md, SHA256SUMS}
+```
+
+The `MANIFEST.md` records the circuit's `.r1cs` hash and the final `.zkey` hash, binding the released artifacts
+to the ceremony you just ran. See
+[`ARCHITECTURE.md` § Artifact distribution](./ARCHITECTURE.md#artifact-distribution).
+
 ## What to publish
 
 - the circuit source and its `.r1cs` (+ sha256)
-- the ptau URL and sha256 (the public one — never one you generated)
+- the ptau URL and sha256 — the public one, never one you generated
 - every intermediate `.zkey` and each contributor's attestation
 - the beacon value, its announced source, and the iteration count
 - the final `.zkey` and `verification_key.json` (+ sha256)
 
-## What anyone can then check
+## What each party can then check
+
+| Party | Check | Establishes |
+|---|---|---|
+| Anyone | `snarkjs zkey verify <r1cs> <ptau> <final.zkey>` | the key derives from *that* circuit and *that* public ptau, and the published chain is intact and ends in the announced beacon |
+| Anyone | rebuild the circuit, compare the `.r1cs` hash | the circuit is the published source |
+| LSP | sha256 of `verification_key.json` against the transcript | it is verifying against the ceremony's key |
+| Merchant | `sha256sum -c SHA256SUMS` from the release | the `.zkey` and `.wasm` are the released ones |
 
 ```bash
-npx --yes snarkjs@0.7.6 zkey verify dual_sha256_linkage.r1cs powersOfTau28_hez_final_16.ptau dual_sha256_linkage_final.zkey
+npx --yes snarkjs@0.7.6 zkey verify \
+  dual_sha256_linkage.r1cs powersOfTau28_hez_final_16.ptau dual_sha256_linkage_final.zkey
 ```
 
-This confirms the key derives from *that* circuit and *that* public ptau, and that the published contribution
-chain is intact and ends in the announced beacon. Combined with a reproducible build of the circuit, an LSP
-then knows exactly what it is verifying against — and needs only to believe that one contributor was honest.
+Combined with a reproducible build of the circuit, an LSP then knows exactly what it is verifying against — and
+needs only to believe that **one** contributor was honest.
 
 ## Rotation
 
-Proofs are bound to a circuit and key. When the key is rotated, previously generated proofs stop verifying, so
-merchants must regenerate any they have cached. Distribute the new `.wasm` + `.zkey` (provers) and
-`verification_key.json` (verifiers) as release assets with content hashes, as described in
-[`ARCHITECTURE.md` § Artifact distribution](./ARCHITECTURE.md#artifact-distribution).
+Proofs are bound to a circuit and a key. Rotating the key invalidates every proof generated against the old one,
+so:
+
+- **Merchants** must download the new `.zkey` (+ `.wasm` if the circuit changed) and discard any pre-generated
+  proofs they cached off the serving path. `@fiberlsp/prover-linked` keys its converted-key cache to the
+  `.zkey`'s SHA-256, so the cache invalidates itself automatically — a rotated key costs one conversion, not a
+  manual cleanup.
+- **LSPs** must swap `verification_key.json` at `LINKED_JIT_VK_PATH`. The vk and the `.zkey` **must be a matched
+  pair from the same setup**; mixing them fails every proof, silently.
+- **Both** should expect a window where merchants hold the old key and the LSP the new one. Every proof in that
+  window is rejected. Coordinate the swap, or accept the outage.
+
+An LSP that also runs `same_hash` has an escape hatch: merchants can fall back to it and rotate at leisure.
