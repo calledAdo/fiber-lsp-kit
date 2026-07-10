@@ -9,69 +9,117 @@ protocol those decisions produce, and how the pieces compose.
 
 You can only *receive* a Fiber payment over inbound capacity someone has funded toward you, and on Fiber that
 capacity is **per-asset** — RUSD inbound is a different thing from CKB inbound. Everything else follows from how
-FNN's `open_channel` actually behaves (verified against FNN v0.9 source, `crates/fiber-json-types` and
+FNN's `open_channel` actually behaves (established against FNN v0.9 source, `crates/fiber-json-types` and
 `crates/fiber-lib/src/fiber/network.rs`):
 
 - **The opener funds the channel; the funded balance becomes the *peer's* inbound.** There is no `push_amount`
-  and no balance transfer at open. So to give a wallet inbound, someone must open a channel *toward* it.
-- **UDT auto-accept contributes `0`.** When a node auto-accepts an incoming channel it adds
+  and no balance transfer at open. To give a wallet inbound, someone must open a channel *toward* it.
+- **UDT auto-accept contributes `0`.** A node auto-accepting an incoming channel adds
   `auto_accept_channel_ckb_funding_amount` for a CKB channel but **nothing** for a UDT channel. So an LSP that
-  opens a **UDT channel** hands the client pure per-asset inbound for **zero client capital** — this is the
-  flagship capability, and it is FNN's default behaviour.
-- **Nothing crosses at open, so a fee cannot be netted from the channel.** It is therefore **prepaid** (before
-  open) or paid from the client's own outbound right after (CKB channels only).
-
-That last point is the whole reason an LSP is a distinct service rather than a wallet feature, and it drives the
-fee model, the lease model, and the JIT design below.
+  opens a **UDT channel** hands the client pure per-asset inbound for **zero client capital**.
+- **Nothing crosses at open, so a fee cannot be netted from the channel.** It must be paid some other way — and
+  that single fact is what makes the choice of provisioning path an architectural decision rather than a detail.
 
 ## Design decisions
 
-**Protocol first.** The product is the LSPS-Fiber contract in `@fiberlsp/protocol` — assets, order/JIT/lease
-types, fee and rent math, linkage-proof interfaces. The server and SDK exist to prove the contract runs against
-real nodes; any wallet or competing LSP can adopt the contract to interoperate. LSPS-Fiber adapts Lightning's
-LSPS1 ("buy a channel") and adds the thing Lightning cannot: **per-asset** inbound denominated in a specific
-UDT.
+### JIT is the default provisioning path
 
-**The fee is CKB, and its bootstrap is explicit.** A client buying RUSD inbound holds no RUSD yet — only CKB —
-so a CKB fee is the only thing it can pay, and it keeps the LSP oracle-free. Because a zero-capital,
-auto-accept-0 client also has *no outbound* on the new channel, it cannot pay that fee over Fiber at all; the
-`prepaid` fee is then an **out-of-band CKB payment** (on-chain, or over a pre-existing CKB channel). The
-alternative, `from_capacity`, only applies when the client actively dual-funds CKB and thereby gives itself
-outbound — CKB channels only.
+There are two ways to give a merchant inbound: sell it up front (**prepaid purchase**), or create it at the
+moment a real payment arrives (**JIT**). JIT is the default, and the reason is where the trust has to sit.
 
-**Inbound is leased, not sold.** The LSP's cost is *(amount × time)* of locked capital, so the default offering
-is a **two-phase lease**: a one-time CKB **activation** (the first payment, and the minimum stake), then
-**streaming rent** paid in the *channel's own asset* out of revenue. Charging rent post-revenue in the leased
-asset is oracle-free, and it aligns incentives — an LSP that closes early forfeits future rent, and paying rent
-back rebalances the channel, restoring the merchant's inbound. A purchase-only offering is the degenerate case
-(activation, no rent).
+In the prepaid path the merchant pays a CKB activation fee and the LSP *then* opens a channel. **Nothing
+atomically links the two.** The LSP can take the fee and never open, open something worse, or open and close
+immediately. Verifying the fee on-chain does not fix this — it only proves the merchant paid; it gives the
+merchant no recourse. Closing that gap needs an escrowed activation bond, which needs a CKB lock script that
+does not exist yet (see [`../ROADMAP.md`](../ROADMAP.md)). **The prepaid path is trusted by construction.**
 
-**JIT is single-node and linked-hash.** For a merchant with *no* channel, the first payment is provisioned
-just-in-time. Lightning's LSPS2 intercepts the in-flight HTLC; FNN exposes no such hook, so interception moves
-up one layer to the **invoice**: the customer pays a hold invoice at the LSP, the LSP opens the channel and
-forwards, and settles the hold only after the forward succeeds. One node cannot safely hold `invoice(H)` and
-pay `invoice(H)`, so the hold and leg use two different hashes linked by one secret, verified by a zero-knowledge
-proof so the LSP need not trust the merchant. The mechanism is in [`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md).
+JIT inverts it. The customer pays a hold invoice at the LSP; the LSP can only *keep* that money by settling the
+hold, and it can only settle by learning a preimage it obtains by paying the merchant over a freshly opened
+channel. Deliver-or-refund is therefore structural, not promised:
 
-**Mechanism is rigid; policy is pluggable.** The safety-critical *ordering* is fixed — verify the proof before
-minting a hold, hold the customer payment before opening, forward before settling, deliver-or-refund. Everything
-that is *policy* is injected: stores, pricing, the linkage-proof backend, the receive strategy, the timers. This
-"lego brick" separation is what makes the kit reusable rather than a monolith (see Composition, below).
+| | Prepaid purchase | JIT |
+|---|---|---|
+| Merchant | **trusts the LSP** with a fee, before any channel exists | trusts nothing — is paid before the LSP can settle |
+| Customer | n/a | trusts nothing — held payment either delivers or refunds |
+| LSP | trusts nothing | trusts the linkage proof (see *Trust model*, below) |
 
-**Capital discipline is structural.** The LSP can only lose money by paying the merchant leg and then failing to
-settle the customer hold, so the engine never opens before the hold is funded, never forwards when too little
-hold lifetime remains, reads the on-chain TLC expiry rather than guessing it, and re-drives in-flight orders on
-restart. Because FNN exposes no push/subscription for invoice, channel, or payment state, every such transition
-is discovered by polling.
+Prepaid places the risk on the **least sophisticated, least capitalised party** — a cold-start merchant. JIT
+moves all residual trust onto the **LSP**: the party with capital, expertise, and a repeated game, risking its
+own money. That is the right direction for trust to flow, and it is why JIT leads.
 
-**Discovery is registry-first.** A static registry of LSP REST endpoints is the dependable, immediately-orderable
-path; the gossip graph is a complementary capability signal that is authentic but slow to converge for a
-newly-announced node. See Discovery, below.
+JIT is also better economics for both sides. The merchant never buys capacity it may not use — capacity is
+created on demand, sized to a payment that is *already held*. The LSP never speculatively locks capital against
+a merchant who may never receive anything. And it dissolves the fee bootstrap entirely (below).
+
+Prepaid purchase remains available as an explicitly optional capability, for a merchant that wants inbound
+provisioned ahead of any customer so its first checkout is instant. An LSP advertising it should be clear that
+it asks the client to pay before the channel exists.
+
+### The fee is CKB where it must be, and the activation cost migrates into JIT
+
+A client buying inbound holds none of the target asset yet — only CKB — so a CKB fee is the only thing it can
+pay, and it keeps the LSP oracle-free. But a zero-capital, auto-accept-0 client also has **no outbound** on the
+new channel, so it cannot pay that fee over Fiber at all; the prepaid fee then has to be an out-of-band CKB
+payment. That awkwardness exists *only* for prepaid.
+
+Under JIT the fee is simply deducted from the forwarded payment, and the one-time activation cost migrates into
+`fee_base`. The three fee components each pay for a distinct thing:
+
+| Component | Pays for | Charged |
+|---|---|---|
+| `fee_base` | the on-chain open + eventual close, and the risk a merchant makes one sale and leaves | once, netted from the **first** sale |
+| streaming `rent` | the *ongoing* cost of the LSP's locked capital | per period, out of revenue |
+| `fee_bps` | the forwarding value of each payment | per payment |
+
+This matters concretely. A JIT open locks at least the acceptor's `auto_accept_amount` of liquidity plus a CKB
+cell reserve, and costs two on-chain transactions over its life. With `fee_base = 0` a merchant could make one
+dust sale and walk, leaving the LSP with the bill — so `fee_base` must cover an open, and `min_payment` must
+comfortably exceed `fee_base` or the merchant nets nothing. Prepaid's non-refundable activation fee was exactly
+this protection; under JIT it is the same economics, **paid out of money that actually exists** and collected
+atomically at the moment the LSP commits capital.
+
+### Inbound is leased, not sold
+
+The LSP's cost is *(amount × time)* of locked capital, so the offering is a **two-phase lease**: activation
+(above), then **streaming rent** paid in the *channel's own asset* out of revenue. Charging rent post-revenue in
+the leased asset is oracle-free and aligns incentives — an LSP that closes early forfeits future rent, and
+paying rent back rebalances the channel, restoring the merchant's inbound. Rent is charged on **live remaining**
+inbound, not original capacity:
+
+```text
+rent_due = ceil(live_remaining_inbound_capacity · rate_bps_per_period / 10_000)   (in the channel asset)
+```
+
+The lease is JIT's natural companion: the first sale opens the channel and pays activation; subsequent revenue
+pays the rent. There is no moment where the merchant must find capital it does not have.
+
+### Protocol first
+
+The product is the LSPS-Fiber contract in `@fiberlsp/protocol` — assets, order/JIT/lease types, fee and rent
+math, linkage-proof interfaces. The server and SDK exist to prove the contract runs against real nodes; any
+wallet or competing LSP can adopt it to interoperate. LSPS-Fiber adapts Lightning's LSPS1 ("buy a channel") and
+adds what Lightning cannot: **per-asset** inbound denominated in a specific UDT.
+
+### Mechanism is rigid; policy is pluggable
+
+The safety-critical *ordering* is fixed — verify the proof before minting a hold, hold the customer payment
+before opening, forward before settling, deliver-or-refund. Everything that is *policy* is injected: stores,
+pricing, the linkage-proof backend, the receive strategy, the timers. This separation is what makes the kit
+reusable rather than a monolith.
+
+### Capital discipline is structural
+
+The LSP can only lose money by paying the merchant leg and then failing to settle the customer hold. So the
+engine never opens before the hold is funded, never forwards when too little hold lifetime remains, reads the
+on-chain TLC expiry rather than guessing it, and re-drives in-flight orders on restart. Because FNN exposes no
+push/subscription for invoice, channel, or payment state, every transition is discovered by polling.
+
+### Discovery is registry-first
+
+A static registry of LSP REST endpoints is the dependable, immediately-orderable path; the gossip graph is a
+complementary capability signal that is authentic but slow to converge for a newly-announced node.
 
 ## Packages
-
-The layering is the protocol-first decision made concrete: contracts at the bottom, the node adapter above them,
-then discovery, then the two consumers.
 
 | Package | Role | Depends on |
 |---|---|---|
@@ -81,7 +129,7 @@ then discovery, then the two consumers.
 | `@fiberlsp/server` | Reference LSP engine + REST API, single-node JIT service, invoice-webhook service, injectable stores. | `protocol`, `fiber` |
 | `@fiberlsp/client` | Merchant/wallet SDK: discovery, quote comparison, inbound purchase, invoice checkout, JIT checkout, payment watching, streaming rent, ledger. | `protocol`, `fiber`, `registry` |
 
-A wallet or competing LSP can depend on `protocol` (and `fiber`) alone and ignore the reference server entirely.
+A wallet or competing LSP can depend on `protocol` (and `fiber`) alone and ignore the reference server.
 
 ## The LSPS-Fiber protocol
 
@@ -92,64 +140,161 @@ errors are `{ "error": { "code", "message" } }` with a 4xx/5xx status.
 object (`funding_udt_type_script`) and a molecule-hex string (invoice `udt_script`); the protocol canonicalises
 both to the hex so the same asset compares equal regardless of source.
 
-**Endpoints.**
-
 | Endpoint | Purpose |
 |---|---|
 | `GET /lsp/v1/info` | Provider identity, supported assets, fee modes, lease terms, JIT terms. |
-| `POST /lsp/v1/orders` · `GET /lsp/v1/orders/:id` | Create / read a normal inbound-liquidity order. |
-| `POST /lsp/v1/orders/:id/settle` | Confirm a prepaid fee (LSP re-checks `get_invoice` = `Paid`) → provision. |
-| `POST /lsp/v1/jit/orders` · `GET :id` | Create a linked-hash JIT order (returns a customer hold invoice) / read it. |
+| `POST /lsp/v1/jit/orders` · `GET :id` | Create a JIT order (returns a customer hold invoice) / read it. |
 | `POST /lsp/v1/jit/orders/:id/reveal` · `/cancel` | Fallback preimage reveal / cancel before capital is committed. |
+| `POST /lsp/v1/orders` · `GET :id` · `POST :id/settle` | Optional prepaid purchase: create / read / confirm fee → provision. |
 | `/merchant/v1/*` | Optional reference invoice + webhook API, mounted when `MERCHANT_FIBER_RPC_URL` is set. |
 
 JIT order reads and controls require the per-order bearer `order_token` returned at creation.
 
-**Fee model.** The fee is always CKB: `fee = base_fee + (channel is CKB ? ceil(proportional_bps · capacity /
-10_000) : 0)`. The proportional term needs a common unit, so it applies only to CKB channels; UDT channels pay
-the flat `base_fee`. Two modes: **`prepaid`** (any asset; settle a CKB `fee_invoice` before open — the only mode
-supporting pure-UDT inbound at zero client capital) and **`from_capacity`** (CKB channels only; client
-dual-funds CKB and pays the fee in-channel after ready).
+**Prepaid fee model** (optional path). `fee = base_fee + (channel is CKB ? ceil(proportional_bps · capacity /
+10_000) : 0)`, in CKB. The proportional term needs a common unit, so it applies only to CKB channels. Two modes:
+`prepaid` (any asset; settle a CKB `fee_invoice` before open) and `from_capacity` (CKB channels only; the client
+dual-funds CKB and pays in-channel once ready).
 
 **Lifecycles.**
 
 ```text
-normal:  created ─prepaid─▶ awaiting_payment ─settle─▶ opening ─▶ channel_active
-                 └─from_capacity──────────────────────▶ opening ─▶ channel_active ─▶ failed (open/ready timeout)
-                 └─unpaid past expires_at ─────────────────────────────────────────▶ expired
+JIT:      created ─customer pays hold─▶ payment_held ─▶ opening ─leg paid─▶ forwarding ─settle─▶ settled
+                  └─not paid by expiry ───────────────────────────────────────────────────────▶ expired
+                  └─open/forward failure or cancel ─────────────────────────────────────────────▶ refunded
 
-JIT:     created ─customer pays hold─▶ payment_held ─▶ opening ─leg paid─▶ forwarding ─settle─▶ settled
-                 └─not paid by expiry ────────────────────────────────────────────────────────▶ expired
-                 └─open/forward failure or cancel ──────────────────────────────────────────────▶ refunded
+prepaid:  created ─▶ awaiting_payment ─settle─▶ opening ─▶ channel_active ─▶ failed (open/ready timeout)
+                  └─unpaid past expires_at ──────────────────────────────────────────────────────▶ expired
 ```
 
 `opening → channel_active` is driven by polling `list_channels` for a `ChannelReady` channel to the target, in
 the requested asset, whose LSP-side balance covers the requested inbound.
 
-## Flows
+## JIT checkout
 
-**Pre-provisioned lease** (default, lowest-complexity): discover an LSP → `buyInboundLiquidity` → LSP validates
-and quotes → client pays the CKB activation → LSP opens the asset channel → on `ChannelReady` the merchant
-invoices and receives → rent streams back by keysend. Rent is charged on **live remaining** inbound, not
-original capacity:
+One LSP node receives the customer hold payment, opens a channel to the merchant, pays the merchant leg
+invoice, and settles the customer hold only after the leg has settled. The order of operations is the whole
+point: the payment is held safely, the channel is opened, the net amount is forwarded, and only then is the hold
+settled — deliver to the merchant, or refund the payer.
+
+### The linked-hash construction
+
+One FNN node cannot safely hold `invoice(H)` and also send `payment(H)` — it can mark its own invoice paid and
+reject the held TLC. So the hold and the leg use two different hashes derived from one merchant secret `S`. An
+FNN invoice preimage is a fixed 32-byte `Hash256`, so both preimages are kept to 32 bytes — the domain-tagged
+value is hashed down rather than fed in raw:
 
 ```text
-rent_due = ceil(live_remaining_inbound_capacity · rate_bps_per_period / 10_000)   (in the channel asset)
+S           = merchant-generated 32-byte secret
+leg_hash  B = sha256(S)                              (leg invoice; preimage = S)
+hold_hash A = sha256(sha256("LSPS-FIBER/JIT/HOLD\0" || S))
+                                                     (hold invoice; preimage = sha256(TAG || S))
 ```
 
-**Single-node JIT** (first payment, no inbound yet): merchant derives the linked `hold_hash`/`leg_hash` and a
-leg invoice → registers the order with a linkage proof → LSP returns a customer hold invoice → customer pays,
-funds held at the LSP → LSP opens the channel, forwards the net leg, derives the hold preimage, settles. It is
-atomic (deliver-or-refund) at **checkout latency** — an on-chain open, not sub-second interception. The timing
-discipline that keeps it loss-free (hold-vs-open budget, the on-chain TLC ceiling read from
-`pending_tlcs[].expiry`, leg-outlives-hold validation, retrying settle + resume-on-restart) is detailed in
-[`JIT-CHECKOUT.md`](./JIT-CHECKOUT.md).
+Paying the leg reveals `S`; the LSP derives the hold preimage `sha256(TAG || S)` and settles. The tag is
+essential — without it the hold preimage would be `sha256(S) = B`, which is public, letting anyone settle the
+hold. Before committing capital the LSP verifies a proof that `A` and `B` come from one hidden `S`:
+`groth16-dual-sha256`, a Groth16 proof of `∃S : sha256(S)=B ∧ sha256(sha256(TAG||S))=A`. The test-only
+`exposed-secret` scheme reveals `S` and is not a security model — with `S` in hand the LSP could settle the hold
+without paying the merchant.
+
+### Timing and expiries
+
+The only way the LSP loses money is to pay the merchant leg and then fail to settle the customer hold, so every
+timer is checked against the money-flow rather than assumed:
+
+- **Hold vs open budget.** `createOrder` refuses a hold shorter than one open + one forward + a settle margin,
+  and `run()` refuses to pay the merchant when too little hold lifetime remains — it refunds instead.
+- **On-chain TLC ceiling, read not assumed.** The invoice expiry is a soft timer; the held payment's TLC has a
+  hard on-chain expiry past which the customer can force-close and reclaim. Before forwarding, the LSP reads the
+  real TLC expiry from `list_channels` → `pending_tlcs[].expiry` and uses `min(invoice_expiry, tlc_expiry)`.
+- **Leg outlives the hold.** The leg invoice must not expire before the LSP forwards. The client sets the leg
+  expiry above the hold window, and `createOrder` validates the leg's absolute expiry from `parse_invoice`,
+  rejecting `leg_expiry_too_short`. Expiry is read from the *signed invoice*, never from a claimed field.
+- **Durable, retrying settle.** The leg preimage can lag the payment's `Success`; settlement retries until it
+  lands or the hold nears expiry, and `JitService.resume()` re-drives any order left in flight by a crash —
+  including one already `forwarding`. This requires a persistent `JIT_STORE_PATH`; with the in-memory store a
+  crash leaves a held payment to refund at expiry.
+
+### Trust model
+
+JIT is trustless for the customer and the merchant by construction. The LSP's remaining exposure is the
+**soundness of the linkage proof**: a forged proof for two *unlinked* hashes makes the LSP open a channel, pay
+the merchant leg, and then fail to settle the customer hold — a direct loss.
+
+Groth16's proving and verification keys are derived from secret randomness that must be destroyed after the
+setup. Anyone retaining it can forge a proof for a false statement, and that forged proof **verifies against the
+honest key**. Two consequences follow, and they are easy to conflate:
+
+- **A reproducible build does not make the setup trustless.** Publishing the build so anyone can re-derive the
+  artifacts proves the `.zkey`/vk match the published circuit — it rules out a backdoored circuit or a
+  mismatched key, and it is worth doing. It says nothing about whether the setup's secret was destroyed, because
+  that secret is never a build input. `snarkjs zkey verify` likewise checks derivation and the contribution
+  chain, not deletion.
+- **Security rests on at least one honest contributor** in each phase. **This repo ships a single-party
+  development setup and must not be trusted with real funds.**
+
+Two paths make the claim defensible, in increasing strength:
+
+1. **Universal SRS.** Move from Groth16 to Plonk, whose SRS is circuit-independent, and take it from the
+   Perpetual Powers of Tau (many independent contributors, public transcript). This removes the
+   circuit-specific ceremony entirely — there is no setup of ours left to trust. The verifier already takes the
+   verify function as an injected hook, and the public-signal binding is unchanged.
+2. **No SNARK at all.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public tweak `t`,
+   so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and fulfilling
+   one lock yields the opener of the other. This is tracked as an upstream ask in
+   [`upstream-fiber-findings.md`](./upstream-fiber-findings.md).
+
+### Artifact distribution
+
+The circuit source is in
+[`../packages/protocol/circuits/dual-sha256-linkage`](../packages/protocol/circuits/dual-sha256-linkage);
+generated `.zkey`/`.ptau`/`.wasm`/vk files are git-ignored. Integrators do not run the setup — they download the
+artifacts, which should ship as release assets with content hashes (the `.zkey` is tens of megabytes) alongside
+a reproducible build and the setup transcript.
+
+| Role | Files | Trust |
+|---|---|---|
+| Merchant (prover) | `dual_sha256_linkage.wasm` + final `.zkey` | none — pure computation, safe to publish |
+| LSP (verifier) | `verification_key.json` | inherits the setup's trust (see above) |
+
+The `.zkey` and vk must be a matched pair from the same setup and circuit.
+
+### Latency
+
+JIT is atomic but not sub-second: it waits for an on-chain channel open, which takes minutes on testnet. The
+customer's payment stays held throughout and refunds if provisioning fails. Note prepaid does not remove this
+wait — it relocates it to a moment when nobody is waiting. Sub-second JIT on an *unarranged* payment needs
+upstream HTLC interception and zero-conf channels.
+
+### Integration
+
+The merchant drives `JitCheckout` from `@fiberlsp/client`:
+
+```ts
+const checkout = new JitCheckout({ rpc: merchantRpc, lspBaseUrl, merchantPubkey, merchantAddress, proveLinkage });
+const session = await checkout.checkout({ asset: RUSD, amount: "300000000", expirySeconds: 1800 });
+console.log(session.invoice);            // show to the customer
+const final = await session.settle();    // waits for leg payment, reveals if needed
+```
+
+`session` carries `invoice` (customer hold invoice), `paymentHash` (`hold_hash`), `netAmount`, `fee`,
+`settle()`, and `cancel()`. `proveLinkage(holdHash, legHash, secret)` returns the `LinkageProof`.
+
+The LSP runs `JitService` from `@fiberlsp/server`, constructed with its `rpc`, advertised `terms`,
+`supportedAssets`, a `linkageVerifier`, an optional `minCapacity` floor (to satisfy the acceptor's UDT
+auto-accept minimum), an optional persistent `store`, polling controls, and optional `deliverWebhook` /
+`onFraud` hooks. It rejects unsupported assets, duplicate active hashes or invoices, invalid proofs, wrong leg
+hashes or amounts, payments below `min_payment`, over-capacity requests, and unauthorized follow-up calls.
+
+Enable JIT by loading a verification key — `LINKED_JIT_VK_PATH=/path/to/verification_key.json`. The test-only
+`JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1` mode is refused alongside a real key, so an operator cannot silently
+downgrade.
 
 ## Composition model
 
-The two flows are *compositions*, not the only supported paths — the SDK is independent bricks an integrator
-wires as needed. Nothing forces a "check inbound → purchase → issue" sequence, and JIT is a swappable strategy,
-not a silo.
+The flows are *compositions*, not the only supported paths — the SDK is independent bricks an integrator wires
+as needed. Nothing forces a "check inbound → purchase → issue" sequence, and JIT is a swappable strategy, not a
+silo.
 
 Receiver bricks, each usable on its own: `InvoiceService` (decomposed into `checkReceiveReadiness` / `issue` /
 `receive` / `waitForPayment`), `buyInboundFromLsp` (provisioning as an injectable `ensureInbound` hook),
@@ -158,22 +303,22 @@ composer. How a merchant becomes able to receive is itself pluggable behind one 
 
 | Strategy | How inbound is obtained | Customer pays |
 |---|---|---|
+| `JitReceive` | channel opens against the held payment | the LSP hold invoice |
 | `DirectReceive` (have) | already have inbound | a normal invoice on the merchant node |
 | `DirectReceive` + `ensureInbound` (buy) | bought from an LSP first | a normal invoice on the merchant node |
-| `JitReceive` | channel opens on the paying tx | the LSP hold invoice |
-| `autoStrategy({ direct, jit, decide })` | picked per request from readiness | depends on the pick |
+| `autoStrategy({ direct, jit, decide })` | receives directly when inbound already covers the amount, opens JIT when short | depends on the pick |
 
 `ReceiveStrategy.originate(req)` returns a uniform `ReceiveHandle` (payable invoice + `awaitSettlement()` →
 `Receipt`), so callers never branch on the mechanism. The server engine is equally unopinionated: stores are
 dependency-injected (`Memory*` / `File*`), and the JIT linkage backend is selected through
-`selectLinkageVerifiers()` (Groth16, or the test-only exposed-secret path, never both).
+`selectLinkageVerifiers()`.
 
 ## Discovery
 
 Two layers, the wallet's choice:
 
-1. **Static registry** — `registry/providers.json`, a public phonebook carrying only static identity; live
-   terms come from each provider's `/lsp/v1/info`. This is the primary, immediately-orderable path. See
+1. **Static registry** — `registry/providers.json`, a public phonebook carrying only static identity; live terms
+   come from each provider's `/lsp/v1/info`. This is the primary, immediately-orderable path. See
    [`../registry/README.md`](../registry/README.md).
 2. **Gossip graph** — Fiber graph reads expose node pubkeys, addresses, and UDT auto-accept config; the SDK
    merges these with the registry by pubkey. Authentic and registry-free, but a newly-announced node is slow to
@@ -188,7 +333,7 @@ v0.9 source and running live testnet nodes**, not by assumption — the funding 
 peer-dial format, the hold-invoice window, the 32-byte preimage limit. Rough edges and missing surfaces found
 that way are written up as issue drafts and RFCs for the Fiber team in
 [`upstream-fiber-findings.md`](./upstream-fiber-findings.md). The mechanism/policy discipline above is applied
-per-component: a sequence is made rigid only where ordering is the safety property, and everything else is left
+per component: a sequence is made rigid only where ordering is the safety property; everything else is left
 injectable.
 
 What is fully working, reference-grade, and production-bound is in the root [`README.md`](../README.md); the

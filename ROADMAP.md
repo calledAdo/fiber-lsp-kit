@@ -7,11 +7,17 @@ is the path toward something node operators could run in production.
 
 ## Near term
 
-- **On-chain fee settlement for the zero-capital client (purchase flow).** The non-JIT purchase flow's
-  client has no Fiber outbound and pays the CKB activation fee out-of-band today. Add a first-class
-  on-chain-payment verification path (CKB indexer watch keyed by order id) so the whole order is self-serve
-  without a pre-existing CKB channel. (The JIT flow already needs no fee bootstrap — the fee is deducted
-  from the first forwarded payment.)
+- **A linkage setup the LSP can trust.** JIT is the default provisioning path, so its soundness now carries the
+  product — and the shipped artifacts are a **single-party development setup** that must not be trusted with
+  real funds. A reproducible build proves the artifacts match the circuit but says nothing about whether the
+  setup's secret was destroyed. The fix, in increasing strength: move to a **universal SRS** (Plonk, seeded from
+  the Perpetual Powers of Tau) so no circuit-specific ceremony of ours exists at all; or run a genuine
+  multi-party phase-2 with published attestations and a final beacon. **PTLCs** would delete the SNARK entirely.
+- **Escrowed activation bond (prepaid path).** The optional pay-before-open purchase flow is trusted by
+  construction — nothing binds the client's fee to a channel actually being opened, and verifying the fee
+  on-chain does not change that. A CKB lock script escrowing the activation, claimable by the LSP only against a
+  live funding cell, is the real fix. (JIT needs none of this: the fee is netted from the first forwarded
+  payment.)
 - **Persistence hardening.** The file-backed stores survive restarts (orders, invoice watches, JIT orders +
   revealed preimages); move to SQLite/Postgres behind the existing `OrderStore`/`JitStore` interfaces, with
   order expiry sweeping.

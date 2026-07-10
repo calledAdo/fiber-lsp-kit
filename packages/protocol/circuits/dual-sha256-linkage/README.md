@@ -32,7 +32,7 @@ tracked:
 
 You do not need to build this circuit to run the normal demo (`npm run demo`) or inspect the JIT protocol.
 Who needs which artifact, what trust each carries, and why to ship them as Release assets (not in git) are in
-[`JIT-CHECKOUT.md` § Artifact distribution](../../../../docs/JIT-CHECKOUT.md#artifact-distribution).
+[`ARCHITECTURE.md` § Artifact distribution](../../../../docs/ARCHITECTURE.md#artifact-distribution).
 
 ## Prerequisites
 

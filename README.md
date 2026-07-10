@@ -14,8 +14,7 @@ conforming implementation.
 
 | Where to look | For |
 |---|---|
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, discovery, and how it composes |
-| [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md) | single-node linked-hash JIT checkout — construction, APIs, timing discipline, artifact distribution |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
 | [`scripts/demo/`](./scripts/demo) | runnable scripts reproducing the whole flow on live testnet nodes |
 | [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + RFCs for the Fiber team |
 | [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | roadmap · AI usage |
@@ -68,19 +67,20 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
 ## How it works
 
 - **Provisioning.** The LSP funds a channel *toward* the wallet, so the wallet gets **inbound** while
-  contributing **zero** (it auto-accepts): `createOrder → settleFee → open_channel → channel_active`.
-- **Leasing (default).** Inbound is *rented*, not bought. A lease has two phases: **activation** — a one-time
-  **CKB** first payment that opens the channel and is the minimum stake — then **streaming** rent in the
-  **channel's own asset**, paid by keysend out of revenue over the same channel (no second channel, no oracle).
-  Rent aligns incentives: an LSP that closes early forfeits future rent, and paying rent back **restores the
-  merchant's inbound**. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (Design decisions → leasing).
-- **JIT channels (atomic).** A merchant with **zero channels** shows a customer a **hold invoice**; the
-  customer's payment is *captured and held* while the LSP opens a fresh channel on-chain, then forwarded
-  (minus the JIT fee). The current JIT path is **single-node linked-hash JIT**: the customer hold hash and
-  merchant leg hash are different but proven linked, so the LSP can settle the customer hold only after the
-  merchant leg reveals the linked preimage. **The first sale buys the channel** — no out-of-band activation fee,
-  though a live merchant Fiber node still needs enough CKB for its own cell reserve.
-  See [`docs/JIT-CHECKOUT.md`](./docs/JIT-CHECKOUT.md).
+  contributing **zero** (it auto-accepts). Inbound is *rented*, not bought.
+- **JIT channels — the default (atomic).** A merchant with **zero channels** shows the customer a **hold
+  invoice**; the payment is *captured and held* while the LSP opens a fresh channel on-chain, then forwarded
+  (minus the JIT fee). The hold hash and the merchant leg hash differ but are **proven linked**, so the LSP can
+  settle the customer hold only after paying the merchant. **Deliver-or-refund is structural** — and the
+  merchant pays nothing up front, because **the first sale buys the channel**. This is why JIT is the default:
+  the alternative asks the merchant to pay a fee *before* any channel exists and trust the LSP to open one.
+  See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).
+- **Leasing.** After activation, **streaming** rent is paid in the **channel's own asset** by keysend out of
+  revenue over the same channel (no second channel, no oracle). Rent aligns incentives: an LSP that closes early
+  forfeits future rent, and paying rent back **restores the merchant's inbound**.
+- **Prepaid purchase (optional).** A merchant that wants inbound provisioned *ahead* of any customer can buy it
+  with a CKB activation fee. Be aware it is pay-before-open: nothing atomically binds the fee to a channel
+  actually being opened.
 - **Discovery.** The primary path is a **registry** of LSP REST endpoints — fast and immediately orderable,
   shipped as [`registry/providers.json`](./registry/providers.json) (a public phonebook; add yours by PR). It
   carries only static identity; live terms come from each provider's `/lsp/v1/info`. Richer **gossip-graph**
@@ -107,7 +107,7 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 |---|---|
 | **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce with [`scripts/demo/`](./scripts/demo). |
 | **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
-| **Needed for production** | auth + rate-limiting on the LSP REST · native LSP endpoint and capability advertisement in the Fiber graph · on-chain fee verification for the zero-capital *purchase* case · production linkage-proof artifact distribution for single-node JIT · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf, RFC sketched in the findings doc). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
+| **Needed for production** | **a linkage setup the LSP can trust** — the shipped one is a single-party dev setup, so JIT is not yet trustless in practice (a universal-SRS scheme, or PTLCs, removes the dependency) · auth + rate-limiting on the LSP REST · native LSP endpoint/capability advertisement in the Fiber graph · an escrowed activation bond to close the *prepaid* path's pay-before-open trust gap · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
 
 ## License
 

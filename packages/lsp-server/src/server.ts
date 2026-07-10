@@ -98,9 +98,20 @@ async function main() {
     : undefined;
 
   // By default a prepaid order is only provisioned once its CKB fee invoice actually settled
-  // (get_invoice → "Paid"). LSP_TRUST_SETTLE=1 bypasses this for the zero-capital flagship flow, whose
-  // client has no Fiber outbound and pays the fee out-of-band in CKB (see spec §4).
+  // (get_invoice → "Paid"). LSP_TRUST_SETTLE=1 bypasses that check entirely.
+  //
+  // Note the prepaid purchase path is trusted by construction either way: nothing atomically links the
+  // client's fee payment to the LSP actually opening a channel, so verifying the fee only proves the client
+  // paid — it gives the client no recourse. JIT is the default precisely because it has no such gap. Prepaid
+  // stays available for a client that wants inbound provisioned ahead of any customer.
   const trustSettle = process.env.LSP_TRUST_SETTLE === "1";
+  if (trustSettle) {
+    console.warn(
+      "[lsp] WARNING: LSP_TRUST_SETTLE=1 — provisioning without verifying the fee actually settled. The " +
+        "prepaid path already asks the client to pay before the channel exists; this removes even the fee " +
+        "check. Use it only for local demos.",
+    );
+  }
 
   const lsp = new Lsp({
     rpc,
@@ -141,10 +152,18 @@ async function main() {
   if (verifiers.length > 0) {
     jit = new JitService({
       rpc,
+      // JIT is the default provisioning path, so the one-time channel-activation cost is charged here rather
+      // than prepaid. The three parts pay for different things:
+      //   fee_base — the on-chain open + eventual close, and the risk the merchant makes one sale and leaves.
+      //              This is the activation fee, netted from the first sale instead of paid up front.
+      //   fee_bps  — the forwarding value of each payment.
+      //   rent     — the ongoing cost of locked capital (streaming lease, out of revenue).
+      // A JIT open locks >= the acceptor's auto_accept_amount (10 RUSD) plus a CKB cell reserve, so fee_base
+      // must cover it and min_payment must exceed fee_base or the merchant nets nothing.
       terms: {
         fee_bps: Number(process.env.JIT_FEE_BPS ?? 100), // 1% of the payment, deducted from the forward
-        fee_base: process.env.JIT_FEE_BASE ?? "0",
-        min_payment: process.env.JIT_MIN_PAYMENT ?? "10000000", // 0.1 RUSD
+        fee_base: process.env.JIT_FEE_BASE ?? "50000000", // 0.5 RUSD — one open + close
+        min_payment: process.env.JIT_MIN_PAYMENT ?? "500000000", // 5 RUSD — must comfortably exceed fee_base
         max_expiry_seconds: Number(process.env.JIT_MAX_EXPIRY ?? 3600),
       },
       supportedAssets: defaultOfferings(),

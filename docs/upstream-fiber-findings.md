@@ -160,7 +160,7 @@ lifecycle; `Received` state) in the RPC README.
 ## 7. (RFC sketch) HTLC interception + zero-conf channels ⇒ sub-second JIT
 
 Our kit ships JIT channels at *checkout latency* by holding the payer's funds in a hold invoice while the
-channel opens on-chain (see `JIT-CHECKOUT.md`). Matching Lightning LSPS2's *sub-second* JIT for a
+channel opens on-chain (see `ARCHITECTURE.md`). Matching Lightning LSPS2's *sub-second* JIT for a
 payment with **no prior arrangement** needs two upstream pieces: (a) an interception hook for
 *intermediaries* — let a registered process pause an incoming forward whose next hop doesn't exist and
 resume/fail it later (today's hold applies only to the final payee's invoice, and a single node cannot

@@ -94,7 +94,7 @@ See [`README.md`](./README.md) for the server command and the demo sequence.
 ## 7. (optional) Enable single-node JIT
 
 JIT now runs on the same LSP node as the normal server. There is no fourth node and no `JIT_HUB_RPC_URL`.
-The mechanism and API parameters are documented in [`JIT-CHECKOUT.md`](../../docs/JIT-CHECKOUT.md).
+The mechanism and API parameters are documented in [`ARCHITECTURE.md`](../../docs/ARCHITECTURE.md).
 
 To expose `/lsp/v1/jit/*`, start the server with a production linkage verifier:
 
