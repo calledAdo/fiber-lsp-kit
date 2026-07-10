@@ -12,8 +12,12 @@
 //!     linkage-prover convert <circuit.zkey> <circuit.ark>
 //!     linkage-prover <circuit.ark> <witness.wtns> <proof.json> <public.json>
 //!
-//! The converted key is arkworks' own serialization: it is a local cache, not a distributable artifact, and it
-//! is not interchangeable across arkworks versions. Ship the `.zkey`.
+//! The converted key is arkworks' own serialization. It is a **local cache, never a distributable artifact**:
+//! no other prover can read it, `zkey verify` cannot check it against the ceremony transcript, and it carries no
+//! cross-version compatibility guarantee. Ship the `.zkey`; let each machine convert its own.
+//!
+//! A magic header pins the format, so a cache written by an incompatible build is rejected rather than
+//! deserialised into garbage.
 use ark_bn254::{Bn254, Fq, Fq2, Fr};
 use ark_circom::{read_zkey, CircomReduction};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
@@ -21,9 +25,13 @@ use ark_groth16::{Groth16, Proof, ProvingKey};
 use ark_relations::utils::matrix::Matrix;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use ark_std::rand::{rngs::StdRng, SeedableRng};
-use std::{fs::File, io::Read, process::ExitCode};
+use std::{fs::File, io::{Read, Write}, process::ExitCode};
 
 type Err = Box<dyn std::error::Error>;
+
+/// Magic + format tag for a converted key. Bump `CACHE_FORMAT` whenever the arkworks serialization changes.
+const CACHE_MAGIC: &[u8; 8] = b"FLSPARK\0";
+const CACHE_FORMAT: u32 = 1;
 
 /// A converted key: the proving key plus the A and B constraint matrices. Circom's `.zkey` stores no C matrix
 /// (`CircomReduction` derives it), so none is carried here either.
@@ -53,8 +61,12 @@ fn main() -> ExitCode {
 
 fn convert(zkey: &str, out: &str) -> Result<(), Err> {
     let mut f = File::open(zkey)?;
+    // read_zkey validates every curve point. That check happens HERE, once, so the cache below is trustworthy
+    // for this machine and can be loaded without repeating it.
     let (pk, m) = read_zkey(&mut f)?;
     let mut w = File::create(out)?;
+    w.write_all(CACHE_MAGIC)?;
+    w.write_all(&CACHE_FORMAT.to_le_bytes())?;
     pk.serialize_uncompressed(&mut w)?;
     (m.num_instance_variables, m.num_constraints, m.a, m.b).serialize_uncompressed(&mut w)?;
     Ok(())
@@ -68,6 +80,14 @@ fn load_key(path: &str) -> Result<(ProvingKey<Bn254>, Converted), Err> {
         return Ok((pk, (m.num_instance_variables, m.num_constraints, m.a, m.b)));
     }
     let mut f = File::open(path)?;
+    let mut magic = [0u8; 8];
+    f.read_exact(&mut magic)?;
+    let mut format = [0u8; 4];
+    f.read_exact(&mut format)?;
+    if &magic != CACHE_MAGIC || u32::from_le_bytes(format) != CACHE_FORMAT {
+        return Err(format!("{path} is not a converted key for this build; delete it and re-convert").into());
+    }
+    // Points were validated when this cache was written from the .zkey; skipping revalidation is the whole win.
     let pk = ProvingKey::<Bn254>::deserialize_with_mode(&mut f, Compress::No, Validate::No)?;
     let rest = Converted::deserialize_with_mode(&mut f, Compress::No, Validate::No)?;
     Ok((pk, rest))

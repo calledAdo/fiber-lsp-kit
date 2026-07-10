@@ -382,13 +382,16 @@ its figure is the whole process including key load — but it needs `gmp` and `n
 you control the deployment and memory is tight (a 128 MB serverless tier, mobile). Neither changes the curve,
 the circuit, the key, or the trust assumption.
 
-Two build steps get `ark-circom` to the 95 MB above; skip them and it costs **222 MB and 5.0 s** instead:
+Two build steps get `ark-circom` to the 95 MB above; skip them and it costs **222 MB and 5.0 s** instead. Both
+are handled by [`@fiberlsp/prover-linked`](../packages/prover-linked), so a merchant runs neither by hand:
 
-- Its `read_zkey` validates every curve point (4.5 s). Convert the key once into arkworks' native serialization
-  and reload with validation off — 0.9 s, then cached in memory.
-- Its built-in witness generation runs `wasmer`, whose JIT alone is ~140 MB. Feed a pre-generated `.wtns`
-  instead. Witness generation needs no proof library at all: circom emits a dependency-free
-  `witness_calculator.js`.
+- `read_zkey` revalidates every curve point. The prover converts the key to its native form on first use and
+  caches it beside the `.zkey`, keyed to that key's SHA-256: first proof ~6.4 s, every proof after ~1.1 s. The
+  converted key is never published — no other prover reads it, `zkey verify` cannot check it against the
+  ceremony transcript, and it carries no cross-version guarantee. It is a derived cache, not an artifact.
+- `ark-circom`'s built-in witness generation runs `wasmer`, whose JIT alone is ~140 MB. `prover-linked` generates
+  the witness in-process instead: circom's witness calculator needs no proof library, and the ESM port removes
+  its CommonJS-inside-an-ESM-package problem.
 
 Per-phase `VmHWM` locates the real working set: 55 MB for the proving key, +3 MB for the witness, +36 MB of
 prover scratch. Parallelism is not a lever — one core leaves RSS flat and costs `ark-circom` ~3-4× wall time,

@@ -130,14 +130,28 @@ const proveLinkage = makeLinkedProver({
 });
 \`\`\`
 
-Loading a \`.zkey\` validates every curve point, which dominates a proof. Convert it once:
+That is the whole setup. There is no conversion step to run.
 
-\`\`\`bash
-linkage-prover convert linkage.zkey linkage.ark   # then point zkeyPath at linkage.ark
-\`\`\`
+## Why no pre-converted key is published
 
-The converted key is a local cache in arkworks' serialization — not portable across arkworks versions, and not
-something to distribute. Keep the \`.zkey\`.
+Loading a \`.zkey\` revalidates every curve point, which costs roughly 4× a proof. \`makeLinkedProver\` therefore
+converts it to the prover's native form on first use and caches the result beside the \`.zkey\`, keyed to its
+SHA-256. First proof ~6.4 s, every proof after ~1.1 s. Rotating the key invalidates the cache automatically, and
+a corrupt cache is discarded and rebuilt rather than failing an order. Pass \`cache: false\` for \`rapidsnark\`,
+which reads only the \`.zkey\`.
+
+The converted key is deliberately **not** a release asset, even though it compresses to about the same size:
+
+- **No other prover can read it.** \`rapidsnark\` rejects it outright. Publishing it as the artifact would lock
+  every merchant into one implementation.
+- **It cannot be audited.** \`zkey verify\` takes \`<r1cs> <ptau> <zkey>\`; there is no converted-key input. A
+  merchant downloading one could not check it derives from the published ceremony — they would be trusting our
+  conversion instead of the transcript.
+- **It is arkworks' internal serialization**, with no cross-version guarantee, and it is loaded without curve
+  validation precisely because the local machine produced it from a \`.zkey\` it already validated.
+
+The \`.zkey\` is the ceremony's artifact. The converted key is a derived cache, and caches belong on the machine
+that built them.
 
 ## LSP setup
 

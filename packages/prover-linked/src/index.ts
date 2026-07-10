@@ -20,9 +20,11 @@
  * Nothing here is required for `same_hash` JIT, which needs no proof at all.
  */
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   dualSha256,
   groth16DualSha256Proof,
@@ -43,6 +45,17 @@ export interface LinkedProverConfig {
    * Must accept `<zkey> <wtns> <proof.json> <public.json>`.
    */
   proverPath?: string;
+  /**
+   * Convert the `.zkey` to the prover's native form once, then reuse it. Loading a `.zkey` revalidates every
+   * curve point, which costs ~4× a proof; the cache pays that once. The converted key is written beside the
+   * `.zkey` (or in `cacheDir`) and keyed to its SHA-256, so replacing the `.zkey` invalidates it automatically.
+   *
+   * Only `linkage-prover` understands the converted format. Set `false` for `rapidsnark` or any other prover.
+   * Default `true`.
+   */
+  cache?: boolean;
+  /** Where the converted key lives. Default: alongside `zkeyPath`. */
+  cacheDir?: string;
   /** Seconds before a hung prover is killed. Default 120. */
   timeoutSeconds?: number;
   /** Where scratch files go. Default the OS temp dir. */
@@ -86,10 +99,28 @@ export function makeLinkedProver(
 ): (holdHash: string, legHash: string, secretHex: string) => Promise<LinkageProof> {
   const prover = cfg.proverPath ?? process.env.FIBERLSP_LINKED_PROVER ?? "linkage-prover";
   const timeoutMs = (cfg.timeoutSeconds ?? 120) * 1000;
+  const wantCache = cfg.cache ?? true;
+  let keyPromise: Promise<string> | undefined;
+
+  /** The key to prove against: the converted cache when enabled, else the `.zkey` itself. Resolved once. */
+  const provingKey = (): Promise<string> => {
+    if (!wantCache) return Promise.resolve(cfg.zkeyPath);
+    keyPromise ??= ensureConvertedKey(cfg, prover, timeoutMs).catch((e: unknown) => {
+      // A cache is an optimisation, never a requirement: fall back to the .zkey and say why.
+      keyPromise = undefined;
+      console.warn(
+        `[prover-linked] could not convert the proving key (${e instanceof Error ? e.message : String(e)}); ` +
+          `proving from the .zkey, which revalidates every curve point and is roughly 4x slower`,
+      );
+      return cfg.zkeyPath;
+    });
+    return keyPromise;
+  };
 
   return async (holdHash, legHash, secretHex) => {
     const wasm = await readFile(cfg.wasmPath);
     const wtns = await calculateWtnsBin(wasm, linkageWitnessInput(secretHex));
+    const keyPath = await provingKey();
 
     const dir = await mkdtemp(join(cfg.tmpDir ?? tmpdir(), "fiberlsp-prove-"));
     try {
@@ -97,7 +128,16 @@ export function makeLinkedProver(
       const proofPath = join(dir, "proof.json");
       const publicPath = join(dir, "public.json");
       await writeFile(wtnsPath, wtns);
-      await run(prover, [cfg.zkeyPath, wtnsPath, proofPath, publicPath], timeoutMs);
+      try {
+        await run(prover, [keyPath, wtnsPath, proofPath, publicPath], timeoutMs);
+      } catch (e) {
+        // The cache is derived state. If it is corrupt or was written by an incompatible build, discard it and
+        // rebuild from the .zkey rather than failing an order the merchant could otherwise have served.
+        if (keyPath === cfg.zkeyPath) throw e;
+        await rm(keyPath, { force: true });
+        keyPromise = undefined;
+        await run(prover, [await provingKey(), wtnsPath, proofPath, publicPath], timeoutMs);
+      }
 
       const proof = JSON.parse(await readFile(proofPath, "utf8")) as unknown;
       const publicSignals = JSON.parse(await readFile(publicPath, "utf8")) as string[];
@@ -119,6 +159,40 @@ export function makeLinkedProver(
       await rm(dir, { recursive: true, force: true });
     }
   };
+}
+
+/**
+ * Convert the `.zkey` into the prover's native form, once, and return the path.
+ *
+ * The cache filename embeds the `.zkey`'s SHA-256, so a rotated key never reuses a stale cache — and so two
+ * keys can coexist. Conversion is atomic: write to a temp name, then rename, so a crash mid-convert cannot
+ * leave a truncated file that a later run would trust.
+ */
+async function ensureConvertedKey(cfg: LinkedProverConfig, prover: string, timeoutMs: number): Promise<string> {
+  const digest = await sha256File(cfg.zkeyPath);
+  const dir = cfg.cacheDir ?? dirname(resolve(cfg.zkeyPath));
+  const cached = join(dir, `${basename(cfg.zkeyPath, ".zkey")}.${digest.slice(0, 16)}.ark`);
+
+  try {
+    await stat(cached);
+    return cached;
+  } catch {
+    /* not converted yet */
+  }
+  const partial = `${cached}.${process.pid}.partial`;
+  await run(prover, ["convert", cfg.zkeyPath, partial], timeoutMs);
+  await rename(partial, cached);
+  return cached;
+}
+
+function sha256File(path: string): Promise<string> {
+  return new Promise((resolve_, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(path);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve_(hash.digest("hex")));
+  });
 }
 
 function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
