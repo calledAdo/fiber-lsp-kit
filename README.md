@@ -36,6 +36,7 @@ provisioning, plus the merchant tooling to run on it, is this kit.**
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
 | `@fiberlsp/server` | Reference LSP engine + REST API, `JitService` in both `linked` and `same_hash` modes, and server-side merchant invoice-webhook service. |
+| `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: ESM witness generation plus any circom-compatible prover binary. Not needed for `same_hash`. |
 | `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `registry/providers.json` | Git-hosted provider registry file; providers can be added by PR, and merchants can download or bundle it. |
 | `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |

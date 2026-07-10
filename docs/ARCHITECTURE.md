@@ -351,6 +351,12 @@ a reproducible build and the setup transcript.
 No proof-system library is required on either side: the merchant picks any Groth16 prover, and the LSP verifies
 with `@noble/curves`.
 
+`npm run release` assembles exactly these assets into `dist/release/` with a `MANIFEST.md` and `SHA256SUMS`. The
+`.zkey` gzips to **16.5 MB**, so ship the compressed form. Merchants drive it through
+[`@fiberlsp/prover-linked`](../packages/prover-linked), which generates the witness in-process (no circom
+`witness_calculator.js`, no CommonJS marker) and shells out to a prover binary: `tools/linkage-prover`
+(`ark-circom`) and `rapidsnark` share one CLI, and the LSP cannot tell which ran.
+
 The `.zkey` and vk must be a matched pair from the same setup and circuit.
 
 ### Prover footprint

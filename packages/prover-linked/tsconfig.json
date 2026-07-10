@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // WebAssembly / BufferSource are declared in lib.dom; nothing here touches the DOM at runtime.
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src"],
+  "references": [{ "path": "../protocol" }]
+}

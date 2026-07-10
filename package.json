@@ -2,18 +2,20 @@
   "name": "fiber-lsp-kit",
   "version": "0.0.0",
   "private": true,
-  "description": "Liquidity-service (LSP) protocol, reference server, and client SDK for Fiber Network — buy inbound liquidity, per asset.",
+  "description": "Liquidity-service (LSP) protocol, reference server, and client SDK for Fiber Network \u2014 buy inbound liquidity, per asset.",
   "license": "MIT",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client",
+    "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
     "demo": "npm run build && node scripts/merchant-demo.mjs",
-    "typecheck": "npm run build -- --dry 2>/dev/null; tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client",
+    "typecheck": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",
-    "server": "npm run build && npm -w @fiberlsp/server run start"
+    "server": "npm run build && npm -w @fiberlsp/server run start",
+    "release": "node scripts/release/build-artifacts.mjs",
+    "prover:build": "cargo build --release --manifest-path tools/linkage-prover/Cargo.toml"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

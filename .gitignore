@@ -25,3 +25,6 @@ packages/protocol/circuits/**/witness.wtns
 packages/protocol/circuits/**/proof.json
 packages/protocol/circuits/**/public.json
 packages/protocol/circuits/**/verification_key.json
+
+# Rust build output for tools/linkage-prover
+tools/**/target/

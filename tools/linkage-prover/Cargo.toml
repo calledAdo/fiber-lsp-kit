@@ -1,0 +1,23 @@
+[package]
+name = "linkage-prover"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Groth16 prover for the JIT linkage circuit. CLI-compatible with rapidsnark."
+
+[dependencies]
+ark-bn254 = "0.6"
+ark-circom = { version = "0.6", default-features = false }
+ark-ff = "0.6"
+ark-groth16 = "0.6"
+ark-relations = "0.6"
+ark-serialize = "0.6"
+ark-snark = "0.6"
+ark-std = "0.6"
+getrandom = "0.2"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
