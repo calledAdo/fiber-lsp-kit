@@ -3,19 +3,43 @@ name = "linkage-prover"
 version = "0.0.0"
 edition = "2021"
 license = "MIT"
-description = "Groth16 prover for the JIT linkage circuit. CLI-compatible with rapidsnark."
+description = "Groth16 prover for the JIT linkage circuit. Native CLI (rapidsnark-compatible) + a wasm entry point."
 
+# rlib so the CLI binary links the core; cdylib so `wasm-bindgen` can emit a loadable module for Node.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# arkworks with `parallel` OFF by default. `parallel` pulls rayon, which panics building a thread pool on
+# wasm — so it is enabled only for non-wasm targets below. `std` is kept (we are not no_std).
 [dependencies]
-ark-bn254 = "0.6"
-ark-circom = { version = "0.6", default-features = false }
-ark-ff = "0.6"
-ark-groth16 = "0.6"
-ark-relations = "0.6"
-ark-serialize = "0.6"
-ark-snark = "0.6"
-ark-std = "0.6"
+# ark-bn254 keeps its default `curve` feature (the Bn254/Fr/G1/G2 types); it has no `parallel` feature to strip.
+ark-bn254 = { version = "0.6", features = ["std"] }
+ark-ec = { version = "0.6", default-features = false, features = ["std"] }
+ark-ff = { version = "0.6", default-features = false, features = ["std"] }
+ark-groth16 = { version = "0.6", default-features = false, features = ["std"] }
+ark-poly = { version = "0.6", default-features = false, features = ["std"] }
+ark-relations = { version = "0.6", default-features = false, features = ["std"] }
+ark-serialize = { version = "0.6", default-features = false, features = ["std"] }
+ark-std = { version = "0.6", default-features = false, features = ["std"] }
+byteorder = "1"
 getrandom = "0.2"
+num-traits = "0.2"
 serde_json = "1"
+
+# Native only: multi-threaded proving via rayon. Target-scoped so it never reaches the wasm build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ark-ec = { version = "0.6", features = ["parallel"] }
+ark-ff = { version = "0.6", features = ["parallel"] }
+ark-groth16 = { version = "0.6", features = ["parallel"] }
+ark-poly = { version = "0.6", features = ["parallel"] }
+ark-std = { version = "0.6", features = ["parallel"] }
+
+# wasm-only: the bindgen glue, getrandom's Node/browser CSPRNG backend (crypto.getRandomValues), and a panic
+# hook that surfaces Rust panics as JS errors instead of an opaque `unreachable`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+console_error_panic_hook = "0.1"
 
 [profile.release]
 opt-level = 3

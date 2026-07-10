@@ -6,7 +6,7 @@
  * all of that:
  *
  *     const jit = new JitCheckout({
- *       ...,
+ *       rpc, lsp: new LspClient({ baseUrl }), merchantPubkey,
  *       proveLinkage: makeLinkedProver({ zkeyPath: "./linkage.zkey", wasmPath: "./linkage.wasm" }),
  *     });
  *
@@ -20,6 +20,7 @@
  * Nothing here is required for `same_hash` JIT, which needs no proof at all.
  */
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -36,13 +37,22 @@ import { calculateWtnsBin } from "./witnessCalculator.js";
 export { calculateWtnsBin, type CircomInput } from "./witnessCalculator.js";
 
 export interface LinkedProverConfig {
-  /** The `.zkey` from the ceremony. Must be the matched pair of the LSP's `verification_key.json`. */
+  /**
+   * The proving key: either the ceremony `.zkey` or a converted `.ark` (auto-detected). Both work; the `.ark`
+   * proves ~7× faster in the wasm backend because it skips the snarkjs-format parse (15 s → 2 s). Must be the
+   * matched pair of the LSP's `verification_key.json`.
+   */
   zkeyPath: string;
   /** The circuit's compiled `.wasm`. Only the wasm is needed — not circom's emitted `witness_calculator.js`. */
   wasmPath: string;
   /**
-   * The Groth16 prover binary. Defaults to `$FIBERLSP_LINKED_PROVER`, else `linkage-prover` on `PATH`.
-   * Must accept `<zkey> <wtns> <proof.json> <public.json>`.
+   * Which prover to run. `wasm` (default) proves in-process with the bundled WebAssembly prover — no binary to
+   * install, pure `npm i`. `native` shells out to a Groth16 binary (faster, ~0.12 s) for anyone who wants it.
+   */
+  backend?: "wasm" | "native";
+  /**
+   * The Groth16 prover binary, used only when `backend: "native"`. Defaults to `$FIBERLSP_LINKED_PROVER`, else
+   * `linkage-prover` on `PATH`. Must accept `<zkey> <wtns> <proof.json> <public.json>`.
    */
   proverPath?: string;
   /**
@@ -89,12 +99,60 @@ export function linkageWitnessInput(secretHex: string): {
   return { secret, hold_hi, hold_lo, leg_hi, leg_lo };
 }
 
+/** The bundled WebAssembly prover (arkworks, compiled from `tools/linkage-prover`). Loaded once, on first use. */
+interface WasmProver {
+  prove_wasm(zkey: Uint8Array, wtns: Uint8Array): string;
+}
+let wasmProverCache: WasmProver | undefined;
+function wasmProver(): WasmProver {
+  // wasm-bindgen emits CommonJS (`--target nodejs`); load it from this ESM module and let it read its own
+  // sibling `.wasm`. The glue + wasm ship inside the package (see `files`), so this needs no external download.
+  wasmProverCache ??= createRequire(import.meta.url)("../wasm/linkage_prover.cjs") as WasmProver;
+  return wasmProverCache;
+}
+
+/** Check the prover's public signals against the order's hashes, then wrap. A mismatch means the artifacts or
+ *  the secret disagree, and the LSP would reject the proof anyway. */
+function bindAndWrap(proof: unknown, publicSignals: string[], holdHash: string, legHash: string): LinkageProof {
+  const expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(legHash)];
+  if (publicSignals.length !== expected.length) {
+    throw new LinkedProverError("public_signal_count", `prover emitted ${publicSignals.length} public signals`);
+  }
+  for (let i = 0; i < expected.length; i++) {
+    if (BigInt(publicSignals[i]!).toString(10) !== expected[i]) {
+      throw new LinkedProverError(
+        "public_signal_mismatch",
+        "the proof's public signals do not match this order's hashes — check the key matches the circuit",
+      );
+    }
+  }
+  return groth16DualSha256Proof({ proof, publicSignals });
+}
+
 /**
- * A `proveLinkage` hook for `JitCheckout`. Generates the witness in-process, runs the prover, and returns the
- * wrapped proof. The public signals the prover emits are checked against the order's hashes before the proof is
- * handed back — a mismatch here means the artifacts or the secret disagree, and the LSP would reject it anyway.
+ * A `proveLinkage` hook for `JitCheckout`. Generates the witness in-process and proves it, returning the wrapped
+ * proof. Defaults to the bundled wasm prover (no binary to install); pass `backend: "native"` to shell out.
  */
 export function makeLinkedProver(
+  cfg: LinkedProverConfig,
+): (holdHash: string, legHash: string, secretHex: string) => Promise<LinkageProof> {
+  if ((cfg.backend ?? "wasm") === "native") return makeNativeLinkedProver(cfg);
+
+  return async (holdHash, legHash, secretHex) => {
+    const [wasm, key] = await Promise.all([readFile(cfg.wasmPath), readFile(cfg.zkeyPath)]);
+    const wtns = await calculateWtnsBin(wasm, linkageWitnessInput(secretHex));
+    let out: { proof: unknown; publicSignals: string[] };
+    try {
+      out = JSON.parse(wasmProver().prove_wasm(key, wtns)) as typeof out;
+    } catch (e) {
+      throw new LinkedProverError("prover_failed", `wasm prover failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return bindAndWrap(out.proof, out.publicSignals, holdHash, legHash);
+  };
+}
+
+/** The native-binary prover: converts the `.zkey` once, caches it, then shells out per proof. */
+function makeNativeLinkedProver(
   cfg: LinkedProverConfig,
 ): (holdHash: string, legHash: string, secretHex: string) => Promise<LinkageProof> {
   const prover = cfg.proverPath ?? process.env.FIBERLSP_LINKED_PROVER ?? "linkage-prover";

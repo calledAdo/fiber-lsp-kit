@@ -28,3 +28,6 @@ packages/protocol/circuits/**/verification_key.json
 
 # Rust build output for tools/linkage-prover
 tools/**/target/
+
+# wasm-bindgen intermediate output (the shipped copy lives in packages/prover-linked/wasm/)
+tools/linkage-prover/pkg-node/

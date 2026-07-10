@@ -12,7 +12,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "wasm"],
   "scripts": {
     "build": "tsc -b"
   },
