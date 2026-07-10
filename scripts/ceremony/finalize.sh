@@ -17,27 +17,29 @@ usage() { echo "usage: finalize.sh <last.zkey> <beacon-hash-hex> [iterations-exp
 LAST_ZKEY="$1"; BEACON="$2"; ITERS="${3:-10}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SNARK="$ROOT/node_modules/.bin/snarkjs"
+# snarkjs is a setup-time tool only — the kit itself does not depend on it (the LSP verifies proofs
+# with @noble/curves). Pinned so a contribution is reproducible against a known implementation.
+SNARK="npx --yes snarkjs@0.7.6"
 BUILD="$(dirname "$LAST_ZKEY")"
 R1CS="$BUILD/dual_sha256_linkage.r1cs"
 PTAU="$BUILD/powersOfTau28_hez_final_16.ptau"
 FINAL="$BUILD/dual_sha256_linkage_final.zkey"
 VK="$BUILD/verification_key.json"
 
-[ -x "$SNARK" ] || { echo "snarkjs not found — run 'npm install' at the repo root" >&2; exit 1; }
+command -v npx >/dev/null || { echo "npx not found — install Node.js" >&2; exit 1; }
 for f in "$LAST_ZKEY" "$R1CS" "$PTAU"; do
   [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 [[ "$BEACON" =~ ^[0-9a-fA-F]+$ ]] || { echo "beacon must be hex (no 0x prefix)" >&2; exit 1; }
 
 echo "==> Applying beacon $BEACON (2^$ITERS iterations)"
-"$SNARK" zkey beacon "$LAST_ZKEY" "$FINAL" "$BEACON" "$ITERS" -n="Final Beacon" >/dev/null
+$SNARK zkey beacon "$LAST_ZKEY" "$FINAL" "$BEACON" "$ITERS" -n="Final Beacon" >/dev/null
 
 echo "==> Exporting verification key"
-"$SNARK" zkey export verificationkey "$FINAL" "$VK" >/dev/null
+$SNARK zkey export verificationkey "$FINAL" "$VK" >/dev/null
 
 echo "==> Verifying the final key against the circuit and the public ptau"
-"$SNARK" zkey verify "$R1CS" "$PTAU" "$FINAL"
+$SNARK zkey verify "$R1CS" "$PTAU" "$FINAL"
 
 echo
 echo "==> Publish these:"

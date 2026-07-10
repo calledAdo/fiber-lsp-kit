@@ -50,6 +50,9 @@ import {
   compositeLinkageVerifier,
   createGroth16DualSha256Verifier,
   exposedSecretVerifier,
+  verifyGroth16Bn254,
+  type Groth16Proof,
+  type Groth16VerificationKey,
 } from "@fiberlsp/protocol";
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -144,12 +147,10 @@ async function main() {
   if (vkPath) {
     try {
       const vk = JSON.parse(readFileSync(vkPath, "utf8"));
-      const snarkjs = (await import("snarkjs" as string)) as {
-        groth16: { verify: (vk: unknown, pub: string[], proof: unknown) => Promise<boolean> };
-      };
       groth16 = createGroth16DualSha256Verifier({
         verificationKey: vk,
-        verifyGroth16: (v, pub, proof) => snarkjs.groth16.verify(v, pub, proof),
+        verifyGroth16: (v, pub, proof) =>
+          verifyGroth16Bn254(v as Groth16VerificationKey, pub, proof as Groth16Proof),
       });
     } catch (e) {
       console.warn(`[jit] could not load Groth16 vk from ${vkPath}: ${e}`);

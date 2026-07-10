@@ -16,8 +16,10 @@ usage() { echo "usage: contribute.sh <in.zkey> <out.zkey> '<your name>'" >&2; ex
 IN_ZKEY="$1"; OUT_ZKEY="$2"; NAME="$3"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SNARK="$ROOT/node_modules/.bin/snarkjs"
-[ -x "$SNARK" ] || { echo "snarkjs not found — run 'npm install' at the repo root" >&2; exit 1; }
+# snarkjs is a setup-time tool only — the kit itself does not depend on it (the LSP verifies proofs
+# with @noble/curves). Pinned so a contribution is reproducible against a known implementation.
+SNARK="npx --yes snarkjs@0.7.6"
+command -v npx >/dev/null || { echo "npx not found — install Node.js" >&2; exit 1; }
 [ -f "$IN_ZKEY" ] || { echo "input zkey not found: $IN_ZKEY" >&2; exit 1; }
 
 echo "==> Contributor: $NAME"
@@ -32,7 +34,7 @@ echo "This takes a few minutes."
 echo
 
 # No -e flag: snarkjs prompts and reads the entropy directly, so it never lands in argv.
-"$SNARK" zkey contribute "$IN_ZKEY" "$OUT_ZKEY" --name="$NAME"
+$SNARK zkey contribute "$IN_ZKEY" "$OUT_ZKEY" --name="$NAME"
 
 echo
 echo "==> Output: $OUT_ZKEY"

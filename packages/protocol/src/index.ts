@@ -17,3 +17,4 @@ export * from "./blake2b.js";
 export * from "./linkage.js";
 export * from "./linkageDualSha256.js";
 export * from "./sameHash.js";
+export * from "./groth16Bn254.js";

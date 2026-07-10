@@ -166,19 +166,19 @@ export const exposedSecretVerifier: LinkageVerifier = {
   },
 };
 
-/** Groth16 proof payload: snarkjs-compatible proof + public signals [A, B as decimal strings]. */
+/** Groth16 proof payload: snarkjs-format proof JSON + public signals (decimal strings). */
 export interface Groth16DualSha256ProofPayload {
   proof: unknown;
   publicSignals: string[];
 }
 
 export interface Groth16DualSha256VerifierConfig {
-  /** snarkjs `groth16.verify(vk, publicSignals, proof)` — inject for tests or load vk from disk. */
+  /** The pairing check. Defaults to `verifyGroth16Bn254` in practice; injectable for tests. */
   verifyGroth16: (vk: unknown, publicSignals: string[], proof: unknown) => Promise<boolean> | boolean;
   verificationKey: unknown;
 }
 
-/** Production linkage verifier — requires a trusted-setup vk + snarkjs (or compatible) verify hook. */
+/** Production linkage verifier — requires a trusted-setup vk and a Groth16 verify hook (see `groth16Bn254.ts`). */
 export function createGroth16DualSha256Verifier(cfg: Groth16DualSha256VerifierConfig): LinkageVerifier {
   return {
     scheme: GROTH16_DUAL_SHA256_SCHEME,

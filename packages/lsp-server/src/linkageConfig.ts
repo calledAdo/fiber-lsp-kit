@@ -2,7 +2,7 @@
  * Linkage-verifier selection for a JIT deployment.
  *
  * Kept pure and separate from `server.ts` (which boots a socket on import): all IO — reading the Groth16
- * verification key, importing snarkjs — is resolved by the caller and passed in as an already-built verifier.
+ * verification key from disk — is resolved by the caller and passed in as an already-built verifier.
  * This function only makes the *decision* of which verifiers run, and enforces the safety invariant that the
  * unsafe exposed-secret mode never coexists with a real zero-knowledge verifier.
  */

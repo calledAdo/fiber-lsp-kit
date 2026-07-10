@@ -46,7 +46,7 @@ curl -O https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_16.pta
 # sha256: 1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922
 cd ..
 circom dual_sha256_linkage.circom --r1cs --wasm --sym -l ../../../../node_modules -o build
-../../../../node_modules/.bin/snarkjs groth16 setup \
+npx --yes snarkjs@0.7.6 groth16 setup \
   build/dual_sha256_linkage.r1cs build/powersOfTau28_hez_final_16.ptau build/contrib_0000.zkey
 ```
 
@@ -83,7 +83,7 @@ This applies the beacon, exports `verification_key.json`, runs `zkey verify`, an
 ## What anyone can then check
 
 ```bash
-snarkjs zkey verify dual_sha256_linkage.r1cs powersOfTau28_hez_final_16.ptau dual_sha256_linkage_final.zkey
+npx --yes snarkjs@0.7.6 zkey verify dual_sha256_linkage.r1cs powersOfTau28_hez_final_16.ptau dual_sha256_linkage_final.zkey
 ```
 
 This confirms the key derives from *that* circuit and *that* public ptau, and that the published contribution

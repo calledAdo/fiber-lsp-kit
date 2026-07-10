@@ -19,6 +19,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "poseidon-lite": "^0.3.0"
   }
 }

@@ -191,8 +191,8 @@ The LSP advertises what it serves in `LspInfo.jit.modes`; the merchant chooses p
 | LSP nodes | one | two (hold + pay) |
 | Invoice hashes | two, proven linked | one, on both legs |
 | Merchant artifacts | `.wasm` + `.zkey` (37 MB) | none |
-| Merchant work per order | 1.4 s / 962 MB under snarkjs; 0.12 s / 95 MB native | one `sha256` |
-| LSP verification | Groth16 — 196 ms under snarkjs, 3 ms native | compare two hashes |
+| Merchant work per order | 0.12 s, 95 MB | one `sha256` |
+| LSP verification | Groth16 pairing check, ~50 ms | compare two hashes |
 | Trusted setup | circuit-specific phase 2 | **none** |
 | LSP cost | one node | a second node + capital positioned at it |
 
@@ -348,6 +348,9 @@ a reproducible build and the setup transcript.
 | Merchant (prover) | `dual_sha256_linkage.wasm` + final `.zkey` | 2.2 MB + 35 MB | none — pure computation, safe to publish |
 | LSP (verifier) | `verification_key.json` | 4 KB | inherits the setup's trust (see above) |
 
+No proof-system library is required on either side: the merchant picks any Groth16 prover, and the LSP verifies
+with `@noble/curves`.
+
 The `.zkey` and vk must be a matched pair from the same setup and circuit.
 
 ### Prover footprint
@@ -355,44 +358,59 @@ The `.zkey` and vk must be a matched pair from the same setup and circuit.
 Applies to `linked` only. The asymmetry is uncomfortable and is the reason `same_hash` exists: the party with no
 capital carries the bulky computation, and the party risking money carries the 4 KB key that guards it.
 
-Measured on one 12-core machine, same circuit (59,771 constraints, 2^16 domain), same `.zkey`, same `.wasm`,
-same witness — both provers emit identical public signals against the same verification key:
+The prover is a swappable program, not part of the protocol: `proveLinkage` is an injected hook. Measured on one
+12-core machine over the same circuit (59,771 constraints, 2^16 domain), the same `.zkey` and the same witness.
+All three emit **identical public signals**, and proofs from each verify against the same key — so this is one
+statement proven three ways:
 
-| | snarkjs (Node) | arkworks `ark-circom` (Rust) |
-|---|---|---|
-| Groth16 prove | 1.35 s | **0.12 s** |
-| verify | 196 ms | **2.9 ms** |
-| **peak RSS, whole process** | **962 MB** | **95 MB** |
+| Prover | Prove | Peak RSS | Needs |
+|---|---|---|---|
+| [`rapidsnark`](https://github.com/iden3/rapidsnark) (C++/asm) | **0.15 s** | **61 MB** | `gmp`, `nasm` |
+| [`ark-circom`](https://github.com/arkworks-rs/circom-compat) (Rust) | 0.12 s + 0.9 s key load | 95 MB | nothing native |
+| `snarkjs` (JS/wasm) | 1.35 s | **962 MB** | nothing |
 
-**The ~950 MB is a snarkjs number, not a Groth16 number.** Instrumenting `VmHWM` per phase in the Rust prover
-shows where the memory actually goes: 55 MB to hold the proving key, +3 MB for the witness, +36 MB of prover
-scratch. That is the true working set, and it is an order of magnitude below what snarkjs resides at. The gap is
+`rapidsnark`'s figure is the whole process, key load included — it memory-maps the `.zkey` rather than parsing
+it. `ark-circom` needs one build step to get there: its `read_zkey` validates every curve point (4.5 s), so
+convert the key once into arkworks' native serialization and reload with validation off. Both are ~10× faster
+and ~10× smaller than snarkjs. Neither changes the curve, the circuit, the key, or the trust assumption.
+
+**The ~950 MB was a snarkjs number, not a Groth16 number.** Per-phase `VmHWM` in the Rust prover locates the real
+working set: 55 MB for the proving key, +3 MB for the witness, +36 MB of prover scratch. The excess is
 `ffjavascript`'s wasm linear memory (which grows and is never returned) plus un-GC'd V8 typed arrays.
 
-Parallelism is not the lever in either. Capping to one core leaves RSS flat in both (snarkjs ~930 MB, arkworks
-86 MB) and multiplies prove time by ~3-4×. The memory is field-arithmetic buffers, not per-worker copies.
-
-Two costs are avoidable and worth naming, because both are build-time rather than per-request:
-
-- `ark-circom`'s `read_zkey` takes **4.5 s** — it validates every curve point. Convert the `.zkey` once into
-  arkworks' native serialization and reload it with validation off: **0.9 s**, one time, then cached in memory.
-- Generating the witness through `wasmer` costs **+140 MB RSS**. Feeding a pre-generated `.wtns` (or a compiled
-  witness graph) instead removes that entirely — it is what the 95 MB figure above reflects.
+Parallelism is not the lever anywhere. One core leaves RSS flat in all three and costs snarkjs and `ark-circom`
+~3-4× wall time; `rapidsnark` does not move at all at this circuit size.
 
 Read it against the right denominator, too: a JIT order exists to bring a channel into being, and once it exists
 subsequent sales are ordinary routed payments over it. The cost is paid per channel-open, not per checkout.
 
-Three ways to cut it, none needing a protocol change:
+Two more ways to cut it, neither needing a protocol change:
 
 - **Use `same_hash`.** The cost goes to zero, not down.
-- **Swap the prover.** `proveLinkage` is an injected hook, so a merchant may drive `ark-circom` (pure Rust, no
-  native deps) or `rapidsnark` over the same `.zkey` and witness instead of snarkjs. Nothing else changes: same
-  curve, same circuit, same key, same trust assumption.
 - **Prove off the serving path.** The statement mentions only `S` — not the amount, the customer, or the expiry
   — so proofs can be generated ahead of time and consumed at checkout through the `randomBytes` and
   `proveLinkage` hooks. The serving process then loads no proving key at all.
 
 The `.zkey` itself does not shrink. It is `f(nVars, domainSize)` — a property of the circuit, not the prover.
+
+### Verification
+
+The LSP's verifier is `verifyGroth16Bn254` in `@fiberlsp/protocol`: the Groth16 pairing equation over BN254,
+with [`@noble/curves`](https://github.com/paulmillr/noble-curves) as its only dependency. It reads snarkjs-format
+keys and proofs, which is also what `rapidsnark` emits.
+
+It is not the fastest option — snarkjs verifies a warm proof in ~8 ms against ~50 ms here — but snarkjs costs
+239 MB of resident wasm to do so, against 73 MB, and a JIT order is a channel-open, not a hot path. The kit
+therefore has **no proof-system dependency at all**: snarkjs is needed only to *run a ceremony*, and the ceremony
+scripts invoke it through a pinned `npx`.
+
+Two rejections matter more than the timing, and both are pinned by tests:
+
+- **Public signals must be field-reduced.** `s` and `s + r` are the same field element, so accepting the
+  unreduced form would verify one statement while a caller comparing decimal strings believes it verified another.
+- **G2 points must lie in the r-order subgroup.** BN254's G2 has a large cofactor, so most on-curve points are
+  *not* in it, and a pairing against one is meaningless. The test uses a real off-subgroup point rather than an
+  off-curve one, because an off-curve point would be rejected for the wrong reason.
 
 The circuit itself cannot shrink. Both invoice hashes must be SHA-256 in-circuit, because FNN computes
 `payment_hash` that way and the proof has to bind *both* public hashes to one secret — so two SHA-256 blocks
