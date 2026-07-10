@@ -17,9 +17,10 @@
  * The `.r1cs` and the ptau are NOT copied here. They are needed only to audit the ceremony, and the ptau must
  * be fetched from its public source rather than a mirror of ours — see docs/CEREMONY.md.
  */
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { dirname, join, resolve } from "node:path";
@@ -60,13 +61,41 @@ await copyFile(sources.vk, join(out, "verification_key.json"));
 await copyFile(sources.wasm, join(out, "linkage.wasm"));
 await pipeline(createReadStream(sources.zkey), createGzip({ level: 9 }), createWriteStream(join(out, "linkage.zkey.gz")));
 
+// Also ship the converted `.ark`: the bundled wasm prover loads it ~7x faster than the `.zkey` because it
+// skips the snarkjs-format parse (≈15 s → ≈2 s). It is reproducibly derived from the `.zkey` by
+// `linkage-prover convert` (deterministic — regenerate and byte-diff to verify), so it is a cache, not a new
+// trust root. It MUST come from the same build as the wasm shipped in @fiberlsp/prover-linked.
+const proverBin =
+  process.env.FIBERLSP_LINKED_PROVER ?? join(root, "tools/linkage-prover/target/release/linkage-prover");
+let arkShipped = false;
+try {
+  await stat(proverBin);
+  const arkTmp = join(out, "linkage.ark");
+  await new Promise((res, rej) => {
+    const p = spawn(proverBin, ["convert", sources.zkey, arkTmp], { stdio: "inherit" });
+    p.on("error", rej);
+    p.on("close", (c) => (c === 0 ? res() : rej(new Error(`convert exited ${c}`))));
+  });
+  await pipeline(createReadStream(arkTmp), createGzip({ level: 9 }), createWriteStream(join(out, "linkage.ark.gz")));
+  await rm(arkTmp, { force: true });
+  arkShipped = true;
+} catch {
+  console.warn(
+    `[release] skipping linkage.ark.gz — native prover not found at ${proverBin}. ` +
+      `Build tools/linkage-prover (cargo build --release) to include the fast-path key.`,
+  );
+}
+
 // The circuit hash identifies the statement. The vk and zkey must be a matched pair from one setup over it.
 const r1csHash = await sha256(sources.r1cs);
 const zkeyHash = await sha256(sources.zkey);
 
 const assets = [
   ["verification_key.json", "LSP", "Set `LINKED_JIT_VK_PATH` to it. Nothing else to install."],
-  ["linkage.zkey.gz", "merchant", `Proving key. \`gunzip\` → ${mb(await size(sources.zkey))}.`],
+  ["linkage.zkey.gz", "merchant", `Proving key (auditable). \`gunzip\` → ${mb(await size(sources.zkey))}.`],
+  ...(arkShipped
+    ? [["linkage.ark.gz", "merchant", "Converted proving key — the wasm prover loads it ~7x faster. `gunzip` → `.ark`."]]
+    : []),
   ["linkage.wasm", "merchant", "The circuit, for witness generation. No other circom output is needed."],
 ];
 
@@ -113,45 +142,36 @@ Mixing them fails every proof, silently, at the LSP.
 
 \`\`\`bash
 npm i @fiberlsp/client @fiberlsp/prover-linked
-curl -LO <release>/linkage.zkey.gz && gunzip linkage.zkey.gz
-curl -LO <release>/linkage.wasm
+curl -LO <release>/linkage.ark.gz && gunzip linkage.ark.gz   # proving key (wasm loads it fast)
+curl -LO <release>/linkage.wasm                              # circuit, for witness generation
 \`\`\`
 
-Then supply the hook. A prover binary is needed; \`linkage-prover\` (in \`tools/\`) and \`rapidsnark\` both work,
-and the LSP cannot tell which produced the proof:
+The prover ships inside \`@fiberlsp/prover-linked\` as WebAssembly — no binary to install. Supply the hook with
+the two file paths:
 
 \`\`\`ts
 import { makeLinkedProver } from "@fiberlsp/prover-linked";
 
 const proveLinkage = makeLinkedProver({
-  zkeyPath: "./linkage.zkey",
+  zkeyPath: "./linkage.ark",   // accepts .ark (fast) or .zkey (audit/fallback), auto-detected
   wasmPath: "./linkage.wasm",
-  proverPath: process.env.FIBERLSP_LINKED_PROVER, // or leave unset and put \`linkage-prover\` on PATH
 });
 \`\`\`
 
-That is the whole setup. There is no conversion step to run.
+That is the whole setup. Pass \`backend: "native"\` (with a \`linkage-prover\`/\`rapidsnark\` binary) only if you
+want raw native speed.
 
-## Why no pre-converted key is published
+## Two forms of the proving key
 
-Loading a \`.zkey\` revalidates every curve point, which costs roughly 4× a proof. \`makeLinkedProver\` therefore
-converts it to the prover's native form on first use and caches the result beside the \`.zkey\`, keyed to its
-SHA-256. First proof ~6.4 s, every proof after ~1.1 s. Rotating the key invalidates the cache automatically, and
-a corrupt cache is discarded and rebuilt rather than failing an order. Pass \`cache: false\` for \`rapidsnark\`,
-which reads only the \`.zkey\`.
+- **\`linkage.zkey\`** is the ceremony's artifact and the **auditable** one:
+  \`snarkjs zkey verify <r1cs> <ptau> linkage.zkey\` confirms it derives from the published ceremony.
+- **\`linkage.ark\`** is the same key in the wasm prover's native form. It loads ~7× faster (it skips the
+  snarkjs-format parse), so it is the default the wasm prover consumes. It is a **reproducibly-derived cache,
+  not a separate trust root**: regenerate it with \`linkage-prover convert linkage.zkey out.ark\` and byte-diff
+  against the published \`.ark\`. Because it is arkworks' internal serialization, an arkworks bump changes its
+  bytes and forces a re-publish (a format tag makes a stale one rejected, not mis-read).
 
-The converted key is deliberately **not** a release asset, even though it compresses to about the same size:
-
-- **No other prover can read it.** \`rapidsnark\` rejects it outright. Publishing it as the artifact would lock
-  every merchant into one implementation.
-- **It cannot be audited.** \`zkey verify\` takes \`<r1cs> <ptau> <zkey>\`; there is no converted-key input. A
-  merchant downloading one could not check it derives from the published ceremony — they would be trusting our
-  conversion instead of the transcript.
-- **It is arkworks' internal serialization**, with no cross-version guarantee, and it is loaded without curve
-  validation precisely because the local machine produced it from a \`.zkey\` it already validated.
-
-The \`.zkey\` is the ceremony's artifact. The converted key is a derived cache, and caches belong on the machine
-that built them.
+Ship both: the \`.ark\` for speed, the \`.zkey\` for auditing and the native path.
 
 ## LSP setup
 

@@ -16,7 +16,7 @@
 import { udtAsset } from "../packages/protocol/dist/index.js";
 import { FiberChannelRpcClient } from "../packages/fiber/dist/index.js";
 import { InvoiceService, LiquidityMonitor, LspClient, buyInboundFromLsp, SettlementLedger } from "../packages/client/dist/index.js";
-import { Lsp, createApi, InvoiceWebhookService } from "../packages/lsp-server/dist/index.js";
+import { Lsp, PrepaidService, createApi, InvoiceWebhookService } from "../packages/lsp-server/dist/index.js";
 import { createServer } from "node:http";
 
 const RUSD_SCRIPT = {
@@ -87,13 +87,17 @@ function lspNode() {
 // Bridge the reference LSP's in-process REST API to the HttpFetch the LspClient expects (no socket).
 function standUpLspServer(node) {
   let n = 0;
+  const offering = { asset: RUSD, min_capacity: (10n * DEC).toString(), max_capacity: (100000n * DEC).toString(),
+                     fee_schedule: { base_fee: (10n * 100_000_000n).toString(), proportional_bps: 0 } };
   const lsp = new Lsp({
     rpc: node.rpc, lspPubkey: LSP_PUBKEY, addresses: [],
-    supportedAssets: [{ asset: RUSD, min_capacity: (10n * DEC).toString(), max_capacity: (100000n * DEC).toString(),
-                        fee_schedule: { base_fee: (10n * 100_000_000n).toString(), proportional_bps: 0 } }],
+    supportedAssets: [offering], feeModes: ["prepaid"],
+  });
+  const prepaid = new PrepaidService({
+    rpc: node.rpc, lspPubkey: LSP_PUBKEY, supportedAssets: [offering],
     feeModes: ["prepaid"], readyPollAttempts: 5, readyPollIntervalMs: 0, sleep: async () => {}, idgen: () => `order_${n++}`,
   });
-  const api = createApi(lsp);
+  const api = createApi(lsp, { prepaid });
   return async (url, init) => {
     const u = new URL(url);
     const { status, body } = await api(init?.method ?? "GET", u.pathname, init?.body ? JSON.parse(init.body) : undefined);
