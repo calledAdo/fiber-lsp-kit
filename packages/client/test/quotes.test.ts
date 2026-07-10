@@ -26,12 +26,9 @@ function handleFor(baseFee: string) {
     addresses: [],
     supportedAssets: offerings,
     feeModes: ["prepaid"],
-    readyPollAttempts: 1,
-    readyPollIntervalMs: 0,
-    sleep: async () => {},
-    idgen: () => "o",
   });
-  return createApi(lsp);
+  return createApi(lsp); // quotes only read GET /lsp/v1/info — no prepaid brick needed
+
 }
 
 // Two LSPs at different prices, routed by hostname through one fetch impl.

@@ -6,7 +6,7 @@ import {
   type UdtTypeScript,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp, createApi } from "@fiberlsp/server";
+import { Lsp, PrepaidService, createApi } from "@fiberlsp/server";
 import { makeMockRpc } from "../../lsp-server/test/mockRpc.js";
 import {
   InvoiceService,
@@ -29,10 +29,17 @@ function standUpLsp(makeReady: boolean): HttpFetch {
   const offerings: AssetOffering[] = [
     { asset: RUSD, min_capacity: "10", max_capacity: "1000000", fee_schedule: { base_fee: "1000", proportional_bps: 0 } },
   ];
+  const rpc = new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl });
   const lsp = new Lsp({
-    rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
+    rpc,
     lspPubkey: "0xLSP",
     addresses: [],
+    supportedAssets: offerings,
+    feeModes: ["prepaid"],
+  });
+  const prepaid = new PrepaidService({
+    rpc,
+    lspPubkey: "0xLSP",
     supportedAssets: offerings,
     feeModes: ["prepaid"],
     readyPollAttempts: 1,
@@ -40,7 +47,7 @@ function standUpLsp(makeReady: boolean): HttpFetch {
     sleep: async () => {},
     idgen: () => "o",
   });
-  const api = createApi(lsp);
+  const api = createApi(lsp, { prepaid });
   return async (url, init) => {
     const u = new URL(url);
     const body = init?.body ? JSON.parse(init.body) : undefined;

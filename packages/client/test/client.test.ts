@@ -6,7 +6,7 @@ import {
   type AssetOffering,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp, createApi } from "@fiberlsp/server";
+import { Lsp, PrepaidService, createApi } from "@fiberlsp/server";
 import { makeMockRpc } from "../../lsp-server/test/mockRpc.js";
 import { LspClient, type HttpFetch } from "@fiberlsp/client";
 
@@ -31,10 +31,17 @@ const offerings: AssetOffering[] = [
 /** Wire the client's HTTP layer straight to the in-process API dispatcher — full stack, no socket. */
 function inProcessClient() {
   const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true });
+  const rpc = new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl });
   const lsp = new Lsp({
-    rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
+    rpc,
     lspPubkey: "0xLSP",
     addresses: ["/ip4/127.0.0.1/tcp/8228"],
+    supportedAssets: offerings,
+    feeModes: ["prepaid"],
+  });
+  const prepaid = new PrepaidService({
+    rpc,
+    lspPubkey: "0xLSP",
     supportedAssets: offerings,
     feeModes: ["prepaid"],
     readyPollAttempts: 2,
@@ -45,7 +52,7 @@ function inProcessClient() {
       return () => `order_${++n}`;
     })(),
   });
-  const handle = createApi(lsp);
+  const handle = createApi(lsp, { prepaid });
   const fetchImpl: HttpFetch = async (url, init) => {
     const path = new URL(url, "http://lsp").pathname;
     const body = init?.body ? JSON.parse(init.body) : undefined;

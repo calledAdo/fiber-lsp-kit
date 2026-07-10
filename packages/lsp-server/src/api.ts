@@ -13,7 +13,8 @@
  *   POST /lsp/v1/jit/orders/:id/cancel
  */
 import type { CreateJitOrderRequest, CreateOrderRequest } from "@fiberlsp/protocol";
-import { Lsp, OrderError } from "./lsp.js";
+import type { Lsp } from "./lsp.js";
+import { OrderError, type PrepaidService } from "./prepaid.js";
 import { JitError, type JitService } from "./jit.js";
 
 export interface ApiResponse {
@@ -40,9 +41,9 @@ export type ApiMiddleware = (req: ApiRequest, next: () => Promise<ApiResponse>) 
 
 export function createApi(
   lsp: Lsp,
-  opts: { jit?: JitService; middleware?: ApiMiddleware[] } = {},
+  opts: { prepaid?: PrepaidService; jit?: JitService; middleware?: ApiMiddleware[] } = {},
 ) {
-  const jit = opts.jit;
+  const { prepaid, jit } = opts;
   const core = async (req: ApiRequest): Promise<ApiResponse> => {
     const { method, path, body, headers } = req;
     try {
@@ -59,18 +60,18 @@ export function createApi(
       if (method === "GET" && route === "lsp/v1/liquidity") {
         return ok(await lsp.liquidity());
       }
-      if (method === "POST" && route === "lsp/v1/orders" && parts.length === 3) {
-        const order = await lsp.createOrder(body as CreateOrderRequest);
+      if (prepaid && method === "POST" && route === "lsp/v1/orders" && parts.length === 3) {
+        const order = await prepaid.createOrder(body as CreateOrderRequest);
         return { status: 201, body: order };
       }
-      if (route === "lsp/v1/orders" && parts[3]) {
+      if (prepaid && route === "lsp/v1/orders" && parts[3]) {
         const id = parts[3];
         if (method === "GET" && parts.length === 4) {
-          const order = lsp.getOrder(id);
+          const order = prepaid.getOrder(id);
           return order ? ok(order) : err(404, "not_found", `order ${id} not found`);
         }
         if (method === "POST" && parts[4] === "settle" && parts.length === 5) {
-          return ok(await lsp.settleFee(id));
+          return ok(await prepaid.settleFee(id));
         }
       }
       if (jit && parts[2] === "jit" && parts[3] === "orders") {

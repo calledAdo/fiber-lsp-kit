@@ -1,5 +1,11 @@
 /** @fiberlsp/server — reference LSP engine + REST API for the LSPS-Fiber protocol. */
-export { Lsp, OrderError, makeInvoiceFeeVerifier, type LspConfig } from "./lsp.js";
+export { Lsp, type LspConfig } from "./lsp.js";
+export {
+  PrepaidService,
+  OrderError,
+  makeInvoiceFeeVerifier,
+  type PrepaidServiceConfig,
+} from "./prepaid.js";
 export { channelAsset, openChannelAndAwait, type OpenChannelAndAwaitArgs } from "@fiberlsp/fiber";
 export {
   createApi,
@@ -17,6 +23,7 @@ export {
 } from "./invoiceWebhooks.js";
 export { createMerchantApi } from "./merchantApi.js";
 export { JitService, JitError, type JitServiceConfig } from "./jit.js";
+export { LinkedMode, SameHashMode, type JitModeStrategy, type FraudEvidence } from "./jitModes.js";
 export { MemoryJitStore, FileJitStore, type JitStore, type JitOrderRecord } from "./jitStore.js";
 export { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
 export { selectLinkageVerifiers, type SelectLinkageVerifiersOptions } from "./linkageConfig.js";

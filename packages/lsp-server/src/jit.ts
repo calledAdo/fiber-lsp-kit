@@ -20,11 +20,7 @@ import {
   asBig,
   assetEquals,
   assetUdtScript,
-  deriveHoldPreimageFromLeg,
-  fraudEvidenceDualSha256,
   jitFee,
-  verifyDualSha256Linkage,
-  verifySameHashLinkage,
 } from "@fiberlsp/protocol";
 import {
   invoiceExpirySeconds,
@@ -34,16 +30,10 @@ import {
 } from "@fiberlsp/fiber";
 import { MemoryJitStore, type JitOrderRecord, type JitStore } from "./jitStore.js";
 import { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
+import { LinkedMode, SameHashMode, type JitModeStrategy } from "./jitModes.js";
+import { JitError } from "./jitError.js";
 
-export class JitError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "JitError";
-  }
-}
+export { JitError } from "./jitError.js";
 
 export interface JitServiceConfig {
   /** The hold node: issues, settles and cancels the customer's hold invoice. */
@@ -108,6 +98,9 @@ export class JitService {
   // the check and the store write (the leg invoice is each order's natural unique key).
   private readonly createLock: KeyedLock = makeKeyedLock();
 
+  /** The constructions this deployment can serve, one strategy each — built from what the config provides. */
+  private readonly strategies: Partial<Record<JitMode, JitModeStrategy>>;
+
   constructor(config: JitServiceConfig) {
     this.cfg = {
       capacityMultiplier: 2,
@@ -122,6 +115,13 @@ export class JitService {
       defaultExpirySeconds: 600,
       ...config,
     };
+    // A verification key enables `linked`; a distinct paying node enables `same_hash`. Insertion order is the
+    // advertised order. Both are consequences of deployment, not operator toggles.
+    const strategies: Partial<Record<JitMode, JitModeStrategy>> = {};
+    if (config.linkageVerifier) strategies.linked = new LinkedMode(config.linkageVerifier);
+    if (config.payRpc) strategies.same_hash = new SameHashMode();
+    this.strategies = strategies;
+
     if (this.modes.length === 0) {
       throw new Error(
         "JitService needs a linkageVerifier (for `linked`) or a distinct payRpc (for `same_hash`); it has neither",
@@ -139,10 +139,16 @@ export class JitService {
 
   /** The constructions this deployment can serve — a consequence of its nodes and keys, not a knob. */
   get modes(): JitMode[] {
-    const modes: JitMode[] = [];
-    if (this.cfg.linkageVerifier) modes.push("linked");
-    if (this.cfg.payRpc) modes.push("same_hash");
-    return modes;
+    return Object.keys(this.strategies) as JitMode[];
+  }
+
+  /** The strategy for a mode, or a rejection if this deployment does not serve it. */
+  private strategyFor(mode: JitMode): JitModeStrategy {
+    const strategy = this.strategies[mode];
+    if (!strategy) {
+      throw new JitError("unsupported_mode", `this LSP does not offer JIT mode "${mode}" (offers: ${this.modes})`);
+    }
+    return strategy;
   }
 
   /** Advertised terms: the operator's pricing, the supported modes, and the computed minimum hold floor. */
@@ -325,26 +331,9 @@ export class JitService {
     return mode;
   }
 
-  /**
-   * Decide whether to accept the hashes at all. `same_hash` needs no proof, but it *does* need the two hashes
-   * to coincide and the two nodes to be distinct (guaranteed by the constructor). `linked` needs a valid proof
-   * and distinct hashes — equal hashes would collide on the single node that both holds and pays.
-   */
-  private async admitLinkage(mode: JitMode, req: CreateJitOrderRequest): Promise<void> {
-    if (mode === "same_hash") {
-      if (req.hold_hash.toLowerCase() !== req.leg_hash.toLowerCase()) {
-        throw new JitError("hash_mismatch", "same_hash mode requires hold_hash == leg_hash");
-      }
-      return;
-    }
-    if (req.hold_hash.toLowerCase() === req.leg_hash.toLowerCase()) {
-      throw new JitError("hash_mismatch", "linked mode requires distinct hold_hash and leg_hash");
-    }
-    if (!req.linkage_proof) throw new JitError("missing_linkage_proof", "linked mode requires a linkage_proof");
-    const verifier = this.cfg.linkageVerifier;
-    if (!verifier) throw new JitError("unsupported_mode", "this LSP does not verify linkage proofs");
-    const ok = await Promise.resolve(verifier.verify(req.hold_hash, req.leg_hash, req.linkage_proof));
-    if (!ok) throw new JitError("linkage_invalid", "hold_hash and leg_hash are not proven to share a secret");
+  /** Accept or reject the hashes/proof for this mode before any capital moves. Delegates to the mode strategy. */
+  private admitLinkage(mode: JitMode, req: CreateJitOrderRequest): Promise<void> {
+    return this.strategyFor(mode).admit(req);
   }
 
   private offeringFor(req: CreateJitOrderRequest): AssetOffering {
@@ -459,11 +448,13 @@ export class JitService {
     const holdPreimage = this.holdPreimageForSettle(rec, rec.preimage);
     if (!holdPreimage) {
       const refunded = await this.refund(id, "linkage backstop failed");
-      // Only `linked` can be defrauded this way: it is the mode where a proof stood between the hashes.
-      if (rec.request.mode === "linked") {
-        const ev = fraudEvidenceDualSha256(rec.preimage, rec.request.hold_hash, rec.request.leg_hash);
-        if (ev && this.cfg.onFraud) this.cfg.onFraud(ev, toWire(refunded));
-      }
+      // Only a mode with a proof between the hashes yields fraud evidence; `same_hash` returns null.
+      const ev = this.strategyFor(rec.request.mode).fraudEvidence(
+        rec.preimage,
+        rec.request.hold_hash,
+        rec.request.leg_hash,
+      );
+      if (ev && this.cfg.onFraud) this.cfg.onFraud(ev, toWire(refunded));
       return refunded;
     }
 
@@ -480,11 +471,7 @@ export class JitService {
   /** The value that settles the hold, given the leg preimage — or null if the leg preimage does not unlock it. */
   private holdPreimageForSettle(rec: JitOrderRecord, legPreimage: string): string | null {
     const { mode, hold_hash, leg_hash } = rec.request;
-    if (mode === "same_hash") {
-      return verifySameHashLinkage(legPreimage, hold_hash, leg_hash) ? legPreimage : null;
-    }
-    if (!verifyDualSha256Linkage(legPreimage, hold_hash, leg_hash)) return null;
-    return deriveHoldPreimageFromLeg(legPreimage);
+    return this.strategyFor(mode).holdPreimageFor(legPreimage, hold_hash, leg_hash);
   }
 
   private async legPreimageFromPayment(legHash: string): Promise<string | undefined> {

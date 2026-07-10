@@ -31,13 +31,15 @@
  *   JIT_FEE_BPS / JIT_FEE_BASE / JIT_MIN_PAYMENT / JIT_MAX_EXPIRY — pricing (defaults below).
  *
  * The offering (assets, capacities, fee schedule) is configured in makeDefaultLsp() below; edit it to
- * match your node's liquidity. This entrypoint is deliberately thin — all logic lives in Lsp/api.
+ * match your node's liquidity. This entrypoint is deliberately thin — it just constructs the service bricks
+ * (Lsp identity/liquidity, PrepaidService, JitService, InvoiceWebhookService) and lets createApi compose them.
  */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { udtAsset, CKB, type AssetOffering, type LinkageVerifier } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp, makeInvoiceFeeVerifier } from "./lsp.js";
+import { Lsp } from "./lsp.js";
+import { PrepaidService, makeInvoiceFeeVerifier } from "./prepaid.js";
 import { createApi } from "./api.js";
 import { FileOrderStore } from "./orderStore.js";
 import { InvoiceWebhookService } from "./invoiceWebhooks.js";
@@ -134,6 +136,12 @@ async function main() {
     supportedAssets: defaultOfferings(),
     feeModes: ["prepaid", "from_capacity"],
     operator: "fiber-lsp-kit reference server",
+  });
+  const prepaid = new PrepaidService({
+    rpc,
+    lspPubkey,
+    supportedAssets: defaultOfferings(),
+    feeModes: ["prepaid", "from_capacity"],
     ...(store ? { store } : {}),
     ...(trustSettle ? {} : { verifyFeePaid: makeInvoiceFeeVerifier(rpc) }),
     // On-chain funding confirmation can take a while on testnet; allow tuning the ready-poll window.
@@ -229,7 +237,7 @@ async function main() {
     );
   }
   jit?.resume(); // re-drive any JIT order left in flight by a previous run (settle a mid-forward crash)
-  const handle = createApi(lsp, { ...(jit ? { jit } : {}) });
+  const handle = createApi(lsp, { prepaid, ...(jit ? { jit } : {}) });
 
   // Optional merchant invoice-webhook API, mounted only when a merchant node is configured. It watches
   // that node's invoices (which may be a different node than the LSP's) and POSTs invoice.* webhooks.

@@ -1,14 +1,18 @@
 /**
- * LspClient — wallet-side SDK for the LSPS-Fiber protocol.
+ * LspClient — wallet-side transport for the LSPS-Fiber protocol.
  *
- * Talks to one LSP's REST API. The high-level `buyInboundLiquidity` runs the whole flow: quote → order →
- * pay fee → wait until the channel is active. Paying the fee is delegated to a caller-supplied callback so
- * the SDK stays wallet-agnostic (the client pays using its own FNN node / wallet).
+ * One method per REST endpoint, and the single place the SDK does HTTP to an LSP: every other client class
+ * (JitCheckout, quote comparison, ensureInbound) composes an `LspClient` rather than calling `fetch` itself.
+ * The higher-level `buyInboundLiquidity` runs the prepaid flow end to end (order → pay fee → wait), delegating
+ * the actual fee payment to a caller-supplied callback so the SDK stays wallet-agnostic.
  */
 import type {
   Asset,
+  CreateJitOrderRequest,
   CreateOrderRequest,
   FeeMode,
+  JitOrder,
+  LiquiditySnapshot,
   LspInfo,
   Order,
 } from "@fiberlsp/protocol";
@@ -86,6 +90,33 @@ export class LspClient {
     return this.req<Order>("POST", `/lsp/v1/orders/${id}/settle`);
   }
 
+  /** A live snapshot of the LSP's capacity, grouped by asset. */
+  liquidity(): Promise<LiquiditySnapshot> {
+    return this.req<LiquiditySnapshot>("GET", "/lsp/v1/liquidity");
+  }
+
+  // --- JIT orders -------------------------------------------------------------
+  // The per-order bearer `order_token` returned by createJitOrder authorizes every follow-up call.
+
+  /** Register a JIT intent; returns the customer hold invoice and the order's bearer token. */
+  createJitOrder(req: CreateJitOrderRequest): Promise<JitOrder> {
+    return this.req<JitOrder>("POST", "/lsp/v1/jit/orders", req);
+  }
+
+  getJitOrder(id: string, token: string): Promise<JitOrder> {
+    return this.req<JitOrder>("GET", `/lsp/v1/jit/orders/${id}`, undefined, token);
+  }
+
+  /** Fallback settle: hand the LSP the leg preimage when it could not read it from the forward. */
+  revealJitOrder(id: string, preimage: string, token: string): Promise<JitOrder> {
+    return this.req<JitOrder>("POST", `/lsp/v1/jit/orders/${id}/reveal`, { preimage }, token);
+  }
+
+  /** Cancel before capital is committed; refunds the held customer payment. */
+  cancelJitOrder(id: string, token: string): Promise<JitOrder> {
+    return this.req<JitOrder>("POST", `/lsp/v1/jit/orders/${id}/cancel`, undefined, token);
+  }
+
   /** Poll until the order reaches a terminal state (channel_active / failed / expired). */
   async waitUntilActive(id: string, opts: WaitOpts = {}): Promise<Order> {
     const attempts = opts.attempts ?? 60;
@@ -127,10 +158,13 @@ export class LspClient {
     return order;
   }
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async req<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (body) headers["content-type"] = "application/json";
+    if (token) headers.authorization = `Bearer ${token}`;
     const res = await this.fetchImpl(this.baseUrl + path, {
       method,
-      headers: body ? { "content-type": "application/json" } : {},
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     const json = (await res.json()) as T | { error?: { code: string; message: string } };

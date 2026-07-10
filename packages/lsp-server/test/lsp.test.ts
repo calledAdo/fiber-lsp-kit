@@ -8,7 +8,14 @@ import {
   type FeeQuote,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp, OrderError, createApi, makeInvoiceFeeVerifier, type ApiMiddleware } from "@fiberlsp/server";
+import {
+  Lsp,
+  PrepaidService,
+  OrderError,
+  createApi,
+  makeInvoiceFeeVerifier,
+  type ApiMiddleware,
+} from "@fiberlsp/server";
 import { makeMockRpc } from "./mockRpc.js";
 
 const RUSD = udtAsset(
@@ -37,10 +44,18 @@ const offerings: AssetOffering[] = [
 
 function makeLsp(makeReady = true) {
   const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady });
+  const rpc = new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl });
   const lsp = new Lsp({
-    rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
+    rpc,
     lspPubkey: "0xLSP",
     addresses: ["/ip4/127.0.0.1/tcp/8228"],
+    supportedAssets: offerings,
+    feeModes: ["prepaid", "from_capacity"],
+    now: () => 1_000,
+  });
+  const prepaid = new PrepaidService({
+    rpc,
+    lspPubkey: "0xLSP",
     supportedAssets: offerings,
     feeModes: ["prepaid", "from_capacity"],
     readyPollAttempts: 3,
@@ -52,11 +67,11 @@ function makeLsp(makeReady = true) {
     })(),
     now: () => 1_000,
   });
-  return { lsp, mock };
+  return { lsp, prepaid, mock };
 }
 
 test("HERO: prepaid RUSD order provisions per-asset inbound (client funds 0)", async () => {
-  const { lsp, mock } = makeLsp();
+  const { prepaid, mock } = makeLsp();
   const req: CreateOrderRequest = {
     target_pubkey: "0xCLIENT",
     target_address: "/ip4/127.0.0.1/tcp/8238",
@@ -64,12 +79,12 @@ test("HERO: prepaid RUSD order provisions per-asset inbound (client funds 0)", a
     lsp_balance: "100000",
     fee_mode: "prepaid",
   };
-  let order = await lsp.createOrder(req);
+  let order = await prepaid.createOrder(req);
   assert.equal(order.state, "awaiting_payment");
   assert.equal(order.fee.asset.kind, "CKB"); // fee paid in CKB
   assert.equal(order.payment.mode, "prepaid");
 
-  order = await lsp.settleFee(order.order_id);
+  order = await prepaid.settleFee(order.order_id);
   assert.equal(order.state, "channel_active");
   assert.equal(order.channel_outpoint, "0xoutpoint:0");
   // the channel was opened with the RUSD funding script and no client contribution
@@ -78,8 +93,8 @@ test("HERO: prepaid RUSD order provisions per-asset inbound (client funds 0)", a
 });
 
 test("from_capacity CKB order opens immediately and reaches active", async () => {
-  const { lsp } = makeLsp();
-  const order = await lsp.createOrder({
+  const { prepaid } = makeLsp();
+  const order = await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     asset: CKB,
     lsp_balance: "50000",
@@ -91,15 +106,15 @@ test("from_capacity CKB order opens immediately and reaches active", async () =>
 });
 
 test("settleFee rejects an unknown order and a wrong-state order", async () => {
-  const { lsp } = makeLsp();
-  await assert.rejects(() => lsp.settleFee("nope"), (e) => e instanceof OrderError && e.code === "not_found");
+  const { prepaid } = makeLsp();
+  await assert.rejects(() => prepaid.settleFee("nope"), (e) => e instanceof OrderError && e.code === "not_found");
 });
 
 test("createOrder rejects an unsupported asset and bad capacity", async () => {
-  const { lsp } = makeLsp();
+  const { prepaid } = makeLsp();
   await assert.rejects(
     () =>
-      lsp.createOrder({
+      prepaid.createOrder({
         target_pubkey: "0xC",
         asset: udtAsset({ code_hash: "0x" + "22".repeat(32), hash_type: "type", args: "0x" }),
         lsp_balance: "100",
@@ -108,14 +123,14 @@ test("createOrder rejects an unsupported asset and bad capacity", async () => {
     (e) => e instanceof OrderError && e.code === "unsupported_asset",
   );
   await assert.rejects(
-    () => lsp.createOrder({ target_pubkey: "0xC", asset: CKB, lsp_balance: "1", fee_mode: "prepaid" }),
+    () => prepaid.createOrder({ target_pubkey: "0xC", asset: CKB, lsp_balance: "1", fee_mode: "prepaid" }),
     (e) => e instanceof OrderError && e.code === "below_min_capacity",
   );
 });
 
 test("provisioning times out to failed when the channel never becomes ready", async () => {
-  const { lsp } = makeLsp(false); // channel stays AwaitingChannelReady
-  const order = await lsp.createOrder({
+  const { prepaid } = makeLsp(false); // channel stays AwaitingChannelReady
+  const order = await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     asset: CKB,
     lsp_balance: "50000",
@@ -127,8 +142,8 @@ test("provisioning times out to failed when the channel never becomes ready", as
 });
 
 test("liquidity() reports per-asset capacity read from channels", async () => {
-  const { lsp } = makeLsp();
-  await lsp.createOrder({
+  const { lsp, prepaid } = makeLsp();
+  await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     asset: CKB,
     lsp_balance: "50000",
@@ -145,13 +160,12 @@ test("liquidity() reports per-asset capacity read from channels", async () => {
   assert.equal(ckb.inbound, "0");
 });
 
-function makeLspWithVerifier(invoiceStatus: string) {
+function makePrepaidWithVerifier(invoiceStatus: string) {
   const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true, invoiceStatus });
   const rpc = new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl });
-  const lsp = new Lsp({
+  const prepaid = new PrepaidService({
     rpc,
     lspPubkey: "0xLSP",
-    addresses: [],
     supportedAssets: offerings,
     feeModes: ["prepaid", "from_capacity"],
     readyPollAttempts: 3,
@@ -161,12 +175,12 @@ function makeLspWithVerifier(invoiceStatus: string) {
     now: () => 1_000,
     verifyFeePaid: makeInvoiceFeeVerifier(rpc),
   });
-  return { lsp, mock };
+  return { prepaid, mock };
 }
 
 test("fee verifier blocks provisioning until the invoice is Paid", async () => {
-  const { lsp } = makeLspWithVerifier("Open"); // fee not settled yet
-  const order = await lsp.createOrder({
+  const { prepaid } = makePrepaidWithVerifier("Open"); // fee not settled yet
+  const order = await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     target_address: "/ip4/127.0.0.1/tcp/8238",
     asset: RUSD,
@@ -175,22 +189,22 @@ test("fee verifier blocks provisioning until the invoice is Paid", async () => {
   });
   assert.equal(order.state, "awaiting_payment");
   await assert.rejects(
-    () => lsp.settleFee(order.order_id),
+    () => prepaid.settleFee(order.order_id),
     (e) => e instanceof OrderError && e.code === "fee_unpaid",
   );
-  assert.equal(lsp.getOrder(order.order_id)?.state, "awaiting_payment"); // still not provisioned
+  assert.equal(prepaid.getOrder(order.order_id)?.state, "awaiting_payment"); // still not provisioned
 });
 
 test("fee verifier provisions once the invoice reports Paid", async () => {
-  const { lsp, mock } = makeLspWithVerifier("Paid");
-  const order = await lsp.createOrder({
+  const { prepaid, mock } = makePrepaidWithVerifier("Paid");
+  const order = await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     target_address: "/ip4/127.0.0.1/tcp/8238",
     asset: RUSD,
     lsp_balance: "100000",
     fee_mode: "prepaid",
   });
-  const settled = await lsp.settleFee(order.order_id);
+  const settled = await prepaid.settleFee(order.order_id);
   assert.equal(settled.state, "channel_active");
   assert.ok(mock.calls.includes("get_invoice"), "verifier queried get_invoice");
   assert.ok(mock.calls.includes("open_channel"));
@@ -199,10 +213,9 @@ test("fee verifier provisions once the invoice reports Paid", async () => {
 test("webhook_url receives a POST on each order state transition", async () => {
   const mock = makeMockRpc({ lspPubkey: "0xLSP", makeReady: true });
   const events: { url: string; state: string }[] = [];
-  const lsp = new Lsp({
+  const prepaid = new PrepaidService({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
     lspPubkey: "0xLSP",
-    addresses: [],
     supportedAssets: offerings,
     feeModes: ["prepaid", "from_capacity"],
     readyPollAttempts: 3,
@@ -214,7 +227,7 @@ test("webhook_url receives a POST on each order state transition", async () => {
       events.push({ url, state: order.state });
     },
   });
-  await lsp.createOrder({
+  await prepaid.createOrder({
     target_pubkey: "0xCLIENT",
     asset: CKB,
     lsp_balance: "50000",
@@ -238,17 +251,16 @@ test("fee pricing is pluggable via feeQuote (policy, not mechanism)", async () =
     total_fee: "42",
     fee_mode: "prepaid",
   };
-  const lsp = new Lsp({
+  const prepaid = new PrepaidService({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://mock", fetchImpl: mock.fetchImpl }),
     lspPubkey: "0xLSP",
-    addresses: [],
     supportedAssets: offerings,
     feeModes: ["prepaid"],
     feeQuote: () => custom, // dynamic/per-client pricing injected instead of the static fee_schedule
     now: () => 1_000,
     idgen: () => "o1",
   });
-  const order = await lsp.createOrder({
+  const order = await prepaid.createOrder({
     target_pubkey: "0xC",
     asset: RUSD,
     lsp_balance: "100000",
@@ -258,7 +270,7 @@ test("fee pricing is pluggable via feeQuote (policy, not mechanism)", async () =
 });
 
 test("createApi runs middleware around the core dispatcher (auth short-circuit)", async () => {
-  const { lsp } = makeLsp();
+  const { lsp, prepaid } = makeLsp();
   const seen: string[] = [];
   const authMw: ApiMiddleware = async (req, next) => {
     seen.push(req.path);
@@ -267,7 +279,7 @@ test("createApi runs middleware around the core dispatcher (auth short-circuit)"
     }
     return next();
   };
-  const api = createApi(lsp, { middleware: [authMw] });
+  const api = createApi(lsp, { prepaid, middleware: [authMw] });
 
   const denied = await api("GET", "/lsp/v1/info");
   assert.equal(denied.status, 401);

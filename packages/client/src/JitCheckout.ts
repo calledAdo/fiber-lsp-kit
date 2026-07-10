@@ -15,11 +15,11 @@
  */
 import {
   type Asset,
+  type CreateJitOrderRequest,
   type JitMode,
   type JitOrder,
   type JitTerms,
   type LinkageProof,
-  type LspInfo,
   asBig,
   assetUdtScript,
   dualSha256,
@@ -27,17 +27,17 @@ import {
   sameHashLink,
 } from "@fiberlsp/protocol";
 import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
+import type { LspClient } from "./LspClient.js";
 
 export interface JitCheckoutConfig {
   /** The merchant's own FNN node; issues the leg invoice and receives the forward. */
   rpc: FiberChannelRpcClient;
-  /** The LSP REST base URL, e.g. http://lsp.example:8080 */
-  lspBaseUrl: string;
+  /** Transport to the LSP. Every LSP call this checkout makes goes through it — it does no HTTP of its own. */
+  lsp: LspClient;
   /** The merchant node's pubkey; the JIT channel is opened toward it. */
   merchantPubkey: string;
   /** Multiaddr the LSP can connect to. */
   merchantAddress?: string;
-  fetchImpl?: typeof fetch;
   randomBytes?: (n: number) => Uint8Array;
   sleep?: (ms: number) => Promise<void>;
   /**
@@ -58,6 +58,12 @@ export interface JitCheckoutRequest {
   description?: string;
   expirySeconds?: number;
   webhookUrl?: string;
+  /**
+   * Channel capacity to request, in the asset's base unit — independent of `amount`. Omit and the LSP sizes it
+   * to a multiple of the payment. Size it above the payment so the merchant keeps inbound headroom for later
+   * sales without a fresh on-chain open. Clamped by the LSP to its `[min_capacity, max_capacity]`.
+   */
+  channelCapacity?: string;
 }
 
 export interface JitCheckoutSession {
@@ -85,12 +91,10 @@ export class JitCheckoutError extends Error {
 }
 
 export class JitCheckout {
-  private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly randomBytes: (n: number) => Uint8Array;
 
   constructor(private readonly cfg: JitCheckoutConfig) {
-    this.fetchImpl = cfg.fetchImpl ?? (globalThis.fetch as typeof fetch);
     this.sleep = cfg.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.randomBytes =
       cfg.randomBytes ??
@@ -102,7 +106,7 @@ export class JitCheckout {
   }
 
   async terms(): Promise<JitTerms | undefined> {
-    const info = await this.req<LspInfo>("GET", "/lsp/v1/info");
+    const info = await this.cfg.lsp.getInfo();
     return info.jit;
   }
 
@@ -155,7 +159,7 @@ export class JitCheckout {
     }
 
     const proof = mode === "linked" ? await this.cfg.proveLinkage!(link.hold, link.leg, secret) : undefined;
-    const order = await this.req<JitOrder>("POST", "/lsp/v1/jit/orders", {
+    const body: CreateJitOrderRequest = {
       target_pubkey: this.cfg.merchantPubkey,
       target_address: this.cfg.merchantAddress,
       asset: req.asset,
@@ -165,9 +169,11 @@ export class JitCheckout {
       merchant_invoice: legInv.invoice_address,
       ...(proof ? { linkage_proof: proof } : {}),
       amount: asBig(req.amount).toString(10),
+      ...(req.channelCapacity ? { channel_capacity: asBig(req.channelCapacity).toString(10) } : {}),
       expiry_seconds: req.expirySeconds,
       webhook_url: req.webhookUrl,
-    });
+    };
+    const order = await this.cfg.lsp.createJitOrder(body);
     const token = order.order_token;
     if (!token) throw new JitCheckoutError("missing_order_token", "LSP did not return an order token");
 
@@ -186,19 +192,14 @@ export class JitCheckout {
 
       let revealed = false;
       for (let i = 0; i < attempts; i++) {
-        const current = await this.req<JitOrder>("GET", `/lsp/v1/jit/orders/${order.jit_order_id}`, undefined, token);
+        const current = await this.cfg.lsp.getJitOrder(order.jit_order_id, token);
         if (current.state === "settled") return current;
         if (current.state === "refunded" || current.state === "expired") {
           throw new JitCheckoutError("order_" + current.state, `JIT order is ${current.state}`);
         }
         if (!revealed && current.state === "forwarding") {
           revealed = true;
-          const afterReveal = await this.req<JitOrder>(
-            "POST",
-            `/lsp/v1/jit/orders/${order.jit_order_id}/reveal`,
-            { preimage: link.legPreimage },
-            token,
-          );
+          const afterReveal = await this.cfg.lsp.revealJitOrder(order.jit_order_id, link.legPreimage, token);
           if (afterReveal.state === "settled") return afterReveal;
         }
         if (i === attempts - 1) throw new JitCheckoutError("timeout", "JIT order never settled");
@@ -215,25 +216,8 @@ export class JitCheckout {
       netAmount: order.forward_amount,
       fee: order.fee,
       settle,
-      cancel: () => this.req<JitOrder>("POST", `/lsp/v1/jit/orders/${order.jit_order_id}/cancel`, undefined, token),
+      cancel: () => this.cfg.lsp.cancelJitOrder(order.jit_order_id, token),
     };
-  }
-
-  private async req<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
-    const headers: Record<string, string> = {};
-    if (body) headers["content-type"] = "application/json";
-    if (token) headers.authorization = `Bearer ${token}`;
-    const res = await this.fetchImpl(this.cfg.lspBaseUrl.replace(/\/+$/, "") + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = (await res.json()) as T | { error?: { code: string; message: string } };
-    if (res.status >= 400) {
-      const e = (json as { error?: { code: string; message: string } }).error;
-      throw new JitCheckoutError(e?.code ?? "http_" + res.status, e?.message ?? `HTTP ${res.status}`);
-    }
-    return json as T;
   }
 }
 

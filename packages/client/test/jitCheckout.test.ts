@@ -8,7 +8,7 @@ import {
   type JitTerms,
 } from "@fiberlsp/protocol";
 import { FiberChannelRpcClient, type FetchLike } from "@fiberlsp/fiber";
-import { JitCheckout, JitCheckoutError } from "@fiberlsp/client";
+import { JitCheckout, JitCheckoutError, LspClient } from "@fiberlsp/client";
 
 const RUSD = udtAsset(
   {
@@ -90,10 +90,9 @@ function makeCheckout(legStatuses: string[], orderStates?: JitOrder["state"][]) 
   const rest = makeLspRest(orderStates);
   const checkout = new JitCheckout({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://merchant", fetchImpl: merchant.fetchImpl }),
-    lspBaseUrl: "http://lsp",
+    lsp: new LspClient({ baseUrl: "http://lsp", fetchImpl: rest.fetchImpl }),
     merchantPubkey: "0xM",
     merchantAddress: "/ip4/127.0.0.1/tcp/9999",
-    fetchImpl: rest.fetchImpl,
     randomBytes: () => new Uint8Array(32).fill(0xaa),
     sleep: async () => {},
     proveLinkage: (_hold, _leg, secret) => exposedSecretProof(secret),
@@ -144,9 +143,8 @@ test("checkout requires an explicit linkage proof builder", async () => {
   const rest = makeLspRest();
   const checkout = new JitCheckout({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://merchant", fetchImpl: merchant.fetchImpl }),
-    lspBaseUrl: "http://lsp",
+    lsp: new LspClient({ baseUrl: "http://lsp", fetchImpl: rest.fetchImpl }),
     merchantPubkey: "0xM",
-    fetchImpl: rest.fetchImpl,
     randomBytes: () => new Uint8Array(32).fill(0xaa),
   } as unknown as ConstructorParameters<typeof JitCheckout>[0]);
 
