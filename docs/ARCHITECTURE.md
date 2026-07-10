@@ -319,7 +319,7 @@ per-circuit — is currently a single contribution and is development-only. It m
 funds.** Production needs a multi-party phase 2: independent contributors each running `zkey contribute` and
 publishing an attestation, finalised with `zkey beacon` against a public unpredictable value.
 
-Four paths make the claim defensible, in increasing strength:
+Three paths make the claim defensible, in increasing strength:
 
 1. **Run `same_hash` instead.** A second LSP node removes the proof, so the setup stops existing. This needs no
    upstream change and no new cryptography, and it is why `same_hash` is preferred wherever it is available.
@@ -327,13 +327,7 @@ Four paths make the claim defensible, in increasing strength:
    an attestation, and the chain is finalised against a public unpredictable beacon. Soundness then needs only
    *one* of them to have been honest. This costs coordination, not runtime: the proving key, proof size, and
    verification are unchanged. See [`CEREMONY.md`](./CEREMONY.md).
-3. **A transparent proof system.** Bulletproofs needs no setup at all — its generators are hashed from a public
-   seed, so no secret ever existed to destroy — and it drops the merchant's proving key entirely. It is not free:
-   the prover is slower in wall-clock, and verification becomes linear in circuit size, moving real CPU onto the
-   LSP. That direction is at least coherent, since the setup was the LSP's trust assumption to begin with. The
-   obstacle is practical: the circuit is circom over bn254, and adopting this means rebuilding the SHA-256 gadget
-   against a different backend and curve.
-4. **No proof at all, on one node.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public
+3. **No proof at all, on one node.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public
    tweak `t`, so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and
    fulfilling one lock yields the opener of the other. Upstream HTLC interception would remove the hold invoice —
    and with it the second hash — outright. Both are tracked in
