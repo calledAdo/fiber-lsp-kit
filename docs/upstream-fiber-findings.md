@@ -118,23 +118,34 @@ already holds it — an extra round-trip and a needless trust discussion.
 
 ---
 
-## 5. Misleading error code: invoice-already-`Paid` rejects held TLCs as `HoldTlcTimeout`
+## 5. One node holding and paying the same hash silently loses funds; the error names it `HoldTlcTimeout`
 
-**Severity:** low (diagnosability)
+**Severity:** medium (silent fund loss on the paying node; the misleading code hides why)
 
-**What happens.** In `settle_tlc_set_command.rs`, a held TLC whose invoice is already `Paid` is rejected
-with `TlcErrorCode::HoldTlcTimeout` — the same code as an actual hold-window timeout. We hit this while
-probing whether one node can hold `invoice(H)` and *send* `payment(H)`: the outbound settlement marks the
-node's own invoice `Paid`, and the held inbound TLC is then rejected as a "timeout" that never happened
-(the failure fired ~40 s into a 120 s window). We initially mis-diagnosed the constraint because of it.
+**What happens.** A node that holds `invoice(H)` and also *sends* `payment(H)` has its outbound settlement
+mark its **own** invoice `Paid` without ever fulfilling the held inbound TLC. `send_payment` returns no
+error. In `settle_tlc_set_command.rs` the held TLC is then rejected with `TlcErrorCode::HoldTlcTimeout` —
+the same code as a real hold-window timeout, fired here ~40 s into a 120 s window.
 
-**Repro.**
-1. Node L creates a hold invoice for hash `H` (hash-only `new_invoice`); a payer pays it → TLC held.
-2. L pays a *different* node's invoice with the same hash `H` and it settles (L learns `P`).
-3. L's own invoice flips `Paid`; the held inbound TLC is rejected with `HoldTlcTimeout`.
+**Repro (measured live on testnet, v0.9.0-rc5).**
+1. Node L creates a hold invoice for hash `H` (hash-only `new_invoice`); a payer pays it → TLC held,
+   `get_invoice` → `Received`, one `pending_tlcs` entry carrying `H`.
+2. L pays a *different* node's invoice with the same hash `H`. `send_payment` is **accepted** and reaches
+   `Success`.
+3. L's own invoice flips to `Paid` with no `settle_invoice` call, `cancel_invoice` then refuses ("invoice can
+   not be canceled, current status: Paid"), and the payer's payment ends `Failed / HoldTlcTimeout`.
 
-**Ask.** A distinct code (e.g. `InvoiceAlreadyPaid`) — the semantics ("this node can't be both hold-payee
-and forwarder for one hash") are legitimate, but the current name hides them.
+**Effect.** The payee is paid, the payer is refunded, and **L is out the full amount** — with no error at any
+call site. For a JIT LSP this is precisely the loss the whole construction exists to prevent.
+
+**Ask.** Reject `send_payment` when the node holds an unsettled invoice for the same `payment_hash`, or
+namespace the invoice and payment stores so the outbound fulfilment cannot mark an inbound invoice `Paid`.
+Separately, give the TLC rejection a distinct code (e.g. `InvoiceAlreadyPaid`): the semantics ("this node
+can't be both hold-payee and payer for one hash") are legitimate, but the current name hides them.
+
+**Note.** The constraint is **per node**, and that is load-bearing for us: with a second node holding while a
+first pays, the same hash rides both legs safely (verified live — the hold stayed `Received` and settled from
+the leg preimage). That is the `same_hash` JIT mode, and it is why it needs no linkage proof at all.
 
 ---
 

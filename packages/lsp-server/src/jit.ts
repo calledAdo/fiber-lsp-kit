@@ -1,13 +1,19 @@
 /**
- * JitService -- single-node just-in-time channels via linked hold/leg hashes.
+ * JitService -- just-in-time channels, in either of two constructions.
  *
- * The LSP node holds the customer payment under hold_hash, opens a channel to the merchant, pays the
- * merchant leg under leg_hash, then derives the hold preimage from the settled leg preimage.
+ * The hold node holds the customer payment under hold_hash; the paying node opens a channel to the merchant
+ * and pays the merchant leg under leg_hash. Once the leg settles, the LSP learns the leg preimage and settles
+ * the hold with it (`same_hash`) or with a value derived from it (`linked`).
+ *
+ * When no `payRpc` is configured both roles land on the same node, which cannot hold and pay the same hash —
+ * so that deployment offers only `linked`, and a merchant must supply a zero-knowledge linkage proof. Give the
+ * LSP a distinct paying node and `same_hash` becomes available, needing no proof at all.
  */
 import { randomBytes } from "node:crypto";
 import {
   type AssetOffering,
   type CreateJitOrderRequest,
+  type JitMode,
   type JitOrder,
   type JitTerms,
   type LinkageVerifier,
@@ -18,6 +24,7 @@ import {
   fraudEvidenceDualSha256,
   jitFee,
   verifyDualSha256Linkage,
+  verifySameHashLinkage,
 } from "@fiberlsp/protocol";
 import {
   invoiceExpirySeconds,
@@ -39,11 +46,17 @@ export class JitError extends Error {
 }
 
 export interface JitServiceConfig {
-  /** Single LSP node: issues/settles the hold, opens the channel, and pays the merchant leg. */
+  /** The hold node: issues, settles and cancels the customer's hold invoice. */
   rpc: FiberChannelRpcClient;
+  /**
+   * The paying node: opens the JIT channel and pays the merchant leg. Omit to use `rpc` for both roles — a
+   * single-node deployment, which can only serve `linked`. Supplying a *distinct* node enables `same_hash`.
+   */
+  payRpc?: FiberChannelRpcClient;
   terms: JitTerms;
   supportedAssets: AssetOffering[];
-  linkageVerifier: LinkageVerifier;
+  /** Verifies `linked` linkage proofs. Omit on a deployment that serves only `same_hash`. */
+  linkageVerifier?: LinkageVerifier;
   /** Pricing policy: the fee deducted from a gross payment. Defaults to `jitFee` over the static terms. */
   feeFor?: (terms: JitTerms, gross: bigint) => bigint;
   /** Channel capacity as a multiple of gross payment when merchant does not request one. */
@@ -109,11 +122,32 @@ export class JitService {
       defaultExpirySeconds: 600,
       ...config,
     };
+    if (this.modes.length === 0) {
+      throw new Error(
+        "JitService needs a linkageVerifier (for `linked`) or a distinct payRpc (for `same_hash`); it has neither",
+      );
+    }
+    if (config.payRpc && config.payRpc === config.rpc) {
+      throw new Error("JitService payRpc must be a different node than rpc — one node cannot hold and pay one hash");
+    }
   }
 
-  /** Advertised terms: the operator's pricing plus the computed minimum hold floor (for merchant inspection). */
+  /** The node that opens the channel and pays the merchant leg. Falls back to the hold node when single-node. */
+  private get pay(): FiberChannelRpcClient {
+    return this.cfg.payRpc ?? this.cfg.rpc;
+  }
+
+  /** The constructions this deployment can serve — a consequence of its nodes and keys, not a knob. */
+  get modes(): JitMode[] {
+    const modes: JitMode[] = [];
+    if (this.cfg.linkageVerifier) modes.push("linked");
+    if (this.cfg.payRpc) modes.push("same_hash");
+    return modes;
+  }
+
+  /** Advertised terms: the operator's pricing, the supported modes, and the computed minimum hold floor. */
   get terms(): JitTerms {
-    return { ...this.cfg.terms, min_expiry_seconds: this.minExpirySeconds() };
+    return { ...this.cfg.terms, modes: this.modes, min_expiry_seconds: this.minExpirySeconds() };
   }
 
   getOrder(id: string, token?: string): JitOrder | undefined {
@@ -128,12 +162,13 @@ export class JitService {
   }
 
   private async createOrderLocked(req: CreateJitOrderRequest): Promise<JitOrder> {
+    const mode = this.resolveMode(req);
     const offering = this.offeringFor(req);
     const gross = asBig(req.amount);
     if (gross < asBig(this.cfg.terms.min_payment)) {
       throw new JitError("amount_too_small", `amount below min_payment ${this.cfg.terms.min_payment}`);
     }
-    await this.verifyLinkage(req);
+    await this.admitLinkage(mode, req);
     this.assertNoDuplicate(req);
 
     const fee = (this.cfg.feeFor ?? jitFee)(this.cfg.terms, gross);
@@ -189,6 +224,7 @@ export class JitService {
       state: "created",
       request: {
         ...wireReq,
+        mode,
         asset: offering.asset,
         amount: gross.toString(10),
         channel_capacity: capacity.toString(10),
@@ -280,8 +316,34 @@ export class JitService {
     return toWire(this.update(id, { state: "refunded", failure_reason: "cancelled by merchant" }));
   }
 
-  private async verifyLinkage(req: CreateJitOrderRequest): Promise<void> {
-    const ok = await Promise.resolve(this.cfg.linkageVerifier.verify(req.hold_hash, req.leg_hash, req.linkage_proof));
+  /** The mode this order runs in: the merchant's choice, defaulting to `linked`, and only if we serve it. */
+  private resolveMode(req: CreateJitOrderRequest): JitMode {
+    const mode = req.mode ?? "linked";
+    if (!this.modes.includes(mode)) {
+      throw new JitError("unsupported_mode", `this LSP does not offer JIT mode "${mode}" (offers: ${this.modes})`);
+    }
+    return mode;
+  }
+
+  /**
+   * Decide whether to accept the hashes at all. `same_hash` needs no proof, but it *does* need the two hashes
+   * to coincide and the two nodes to be distinct (guaranteed by the constructor). `linked` needs a valid proof
+   * and distinct hashes — equal hashes would collide on the single node that both holds and pays.
+   */
+  private async admitLinkage(mode: JitMode, req: CreateJitOrderRequest): Promise<void> {
+    if (mode === "same_hash") {
+      if (req.hold_hash.toLowerCase() !== req.leg_hash.toLowerCase()) {
+        throw new JitError("hash_mismatch", "same_hash mode requires hold_hash == leg_hash");
+      }
+      return;
+    }
+    if (req.hold_hash.toLowerCase() === req.leg_hash.toLowerCase()) {
+      throw new JitError("hash_mismatch", "linked mode requires distinct hold_hash and leg_hash");
+    }
+    if (!req.linkage_proof) throw new JitError("missing_linkage_proof", "linked mode requires a linkage_proof");
+    const verifier = this.cfg.linkageVerifier;
+    if (!verifier) throw new JitError("unsupported_mode", "this LSP does not verify linkage proofs");
+    const ok = await Promise.resolve(verifier.verify(req.hold_hash, req.leg_hash, req.linkage_proof));
     if (!ok) throw new JitError("linkage_invalid", "hold_hash and leg_hash are not proven to share a secret");
   }
 
@@ -354,7 +416,7 @@ export class JitService {
 
   /** True once the merchant leg is already paid or in flight — capital is committed; never refund past this. */
   private async merchantCommitted(rec: JitOrderRecord): Promise<boolean> {
-    const s = (await this.cfg.rpc.getPayment(rec.request.leg_hash).catch(() => undefined))?.status;
+    const s = (await this.pay.getPayment(rec.request.leg_hash).catch(() => undefined))?.status;
     return s === "Success" || s === "Inflight";
   }
 
@@ -397,12 +459,15 @@ export class JitService {
     const holdPreimage = this.holdPreimageForSettle(rec, rec.preimage);
     if (!holdPreimage) {
       const refunded = await this.refund(id, "linkage backstop failed");
-      const ev = fraudEvidenceDualSha256(rec.preimage, rec.request.hold_hash, rec.request.leg_hash);
-      if (ev && this.cfg.onFraud) this.cfg.onFraud(ev, toWire(refunded));
+      // Only `linked` can be defrauded this way: it is the mode where a proof stood between the hashes.
+      if (rec.request.mode === "linked") {
+        const ev = fraudEvidenceDualSha256(rec.preimage, rec.request.hold_hash, rec.request.leg_hash);
+        if (ev && this.cfg.onFraud) this.cfg.onFraud(ev, toWire(refunded));
+      }
       return refunded;
     }
 
-    const fwd = await this.cfg.rpc.getPayment(rec.request.leg_hash);
+    const fwd = await this.pay.getPayment(rec.request.leg_hash);
     if (fwd.status !== "Success") return rec;
     try {
       await this.cfg.rpc.settleInvoice(rec.request.hold_hash, holdPreimage);
@@ -412,14 +477,19 @@ export class JitService {
     return this.update(id, { state: "settled", preimage: undefined });
   }
 
+  /** The value that settles the hold, given the leg preimage — or null if the leg preimage does not unlock it. */
   private holdPreimageForSettle(rec: JitOrderRecord, legPreimage: string): string | null {
-    if (!verifyDualSha256Linkage(legPreimage, rec.request.hold_hash, rec.request.leg_hash)) return null;
+    const { mode, hold_hash, leg_hash } = rec.request;
+    if (mode === "same_hash") {
+      return verifySameHashLinkage(legPreimage, hold_hash, leg_hash) ? legPreimage : null;
+    }
+    if (!verifyDualSha256Linkage(legPreimage, hold_hash, leg_hash)) return null;
     return deriveHoldPreimageFromLeg(legPreimage);
   }
 
   private async legPreimageFromPayment(legHash: string): Promise<string | undefined> {
     try {
-      const p = await this.cfg.rpc.getPayment(legHash);
+      const p = await this.pay.getPayment(legHash);
       return p.status === "Success" ? p.payment_preimage : undefined;
     } catch {
       return undefined;
@@ -448,8 +518,9 @@ export class JitService {
 
   private async openAndAwait(id: string): Promise<string | undefined> {
     const req = this.require(id).request;
+    // The paying node funds the channel: it is the one that must have outbound to pay the merchant leg over it.
     // Abandon a late-funding orphan on give-up so a stray retry can't strand the LSP's capacity.
-    const ready = await openChannelAndAwait(this.cfg.rpc, {
+    const ready = await openChannelAndAwait(this.pay, {
       pubkey: req.target_pubkey,
       address: req.target_address,
       fundingAmount: req.channel_capacity as string,
@@ -465,16 +536,16 @@ export class JitService {
 
   private async forward(id: string): Promise<boolean> {
     const rec = this.require(id);
-    const existing = await this.cfg.rpc.getPayment(rec.request.leg_hash).catch(() => undefined);
+    const existing = await this.pay.getPayment(rec.request.leg_hash).catch(() => undefined);
     if (existing?.status !== "Success" && existing?.status !== "Inflight") {
       try {
-        await this.cfg.rpc.sendPayment({ invoice: rec.request.merchant_invoice });
+        await this.pay.sendPayment({ invoice: rec.request.merchant_invoice });
       } catch {
         return false;
       }
     }
     for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
-      const p = await this.cfg.rpc.getPayment(rec.request.leg_hash).catch(() => undefined);
+      const p = await this.pay.getPayment(rec.request.leg_hash).catch(() => undefined);
       if (p?.status === "Success") return true;
       if (p?.status === "Failed") return false;
       await this.cfg.sleep(this.cfg.pollIntervalMs);

@@ -7,13 +7,19 @@ is the path toward something node operators could run in production.
 
 ## Near term
 
-- **A linkage setup the LSP can trust.** JIT is the default provisioning path, so its soundness now carries the
-  product — and the shipped artifacts are a **single-party development setup** that must not be trusted with
-  real funds. A reproducible build proves the artifacts match the circuit but says nothing about whether the
-  setup's secret was destroyed. Phase 1 already uses the public Perpetual Powers of Tau, so nothing there is
-  ours; the gap is Groth16's circuit-specific **phase 2**. The fix is a genuine multi-party phase 2 with
-  published attestations and a final public beacon — coordination cost, no runtime cost. See
-  [`docs/CEREMONY.md`](./docs/CEREMONY.md). **PTLCs** would delete the SNARK entirely.
+- **A linkage setup the LSP can trust — or no setup at all.** `linked` JIT's shipped artifacts are a
+  **single-party development setup** that must not be trusted with real funds. A reproducible build proves the
+  artifacts match the circuit but says nothing about whether the setup's secret was destroyed. Phase 1 already
+  uses the public Perpetual Powers of Tau, so nothing there is ours; the gap is Groth16's circuit-specific
+  **phase 2**. The fix is a genuine multi-party phase 2 with published attestations and a final public beacon —
+  coordination cost, no runtime cost. See [`docs/CEREMONY.md`](./docs/CEREMONY.md).
+  An LSP that runs a second FNN node can serve **`same_hash`** instead and skip all of it: there is no proof, so
+  there is no setup. **PTLCs** would delete the SNARK from `linked` too.
+- **A `same_hash` LSP that does not depend on the merchant revealing.** The paying node learns the leg preimage
+  from the TLC fulfilment, but FNN's `get_payment` does not expose it
+  ([finding #4](./docs/upstream-fiber-findings.md)), so the LSP settles from the merchant's `reveal`. A merchant
+  that takes the forward and never reveals costs the LSP the forwarded amount. This is true of both JIT modes
+  and is fixed upstream, not here.
 - **Escrowed activation bond (prepaid path).** The optional pay-before-open purchase flow is trusted by
   construction — nothing binds the client's fee to a channel actually being opened, and verifying the fee
   on-chain does not change that. A CKB lock script escrowing the activation, claimable by the LSP only against a

@@ -15,6 +15,23 @@ reason the node-less demo exists. Here's the whole thing.
 | **customer** | `127.0.0.1:8237` | `8238` | RUSD **outbound** (to pay) — `00-setup.mjs` tops this up |
 | **merchant** | `127.0.0.1:8247` | `8248` | **CKB** only (a fresh node needs CKB to stay stable; funds **0** RUSD) |
 
+### A fourth node, to serve `same_hash` JIT
+
+`same_hash` JIT needs the LSP to run a second FNN node that opens the JIT channel and pays the merchant leg
+while the first holds the customer's payment. Set it up exactly like the LSP node and point the server at it
+with `JIT_PAY_FIBER_RPC_URL=http://127.0.0.1:8257`.
+
+| Role | RPC | P2P | On-chain funding it needs |
+|---|---|---|---|
+| **LSP paying node** | `127.0.0.1:8257` | `8258` | CKB **+ RUSD** — it is the channel funder |
+
+It needs no channels of its own: it pays the merchant over the channel it has just funded. The server refuses
+to start if this URL resolves to the same node as `FIBER_RPC_URL`, because one node that holds and pays the
+same payment hash silently loses the held payment (see
+[`../../docs/upstream-fiber-findings.md`](../../docs/upstream-fiber-findings.md) #5).
+
+Without this node the LSP serves only `linked`, and merchants must supply a Groth16 linkage proof.
+
 ## 1. Get `fnn`
 
 The Fiber node binary, from <https://github.com/nervosnetwork/fiber>: build from source (`make build`, needs

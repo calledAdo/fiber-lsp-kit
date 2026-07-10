@@ -1,7 +1,7 @@
 /**
  * openChannelAndAwait — the shared "open a channel and wait until it's usable" mechanism.
  *
- * Both the inbound-lease flow (Lsp.provision) and single-node JIT (JitService) need the exact same, subtle
+ * Both the inbound-lease flow (Lsp.provision) and JIT (JitService) need the exact same, subtle
  * sequence against FNN, so it lives here once instead of being maintained twice:
  *
  *   1. connect_peer only if not already peered (a redundant connect crashes the acceptor's gossip actor);

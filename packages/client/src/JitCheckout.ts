@@ -1,11 +1,21 @@
 /**
- * JitCheckout -- single-node linked-hash JIT checkout.
+ * JitCheckout -- the merchant side of a JIT channel order, in either mode the LSP offers.
  *
- * The customer pays the LSP's hold invoice under hold_hash. The LSP pays the merchant's leg invoice under a
- * different leg_hash after opening a fresh channel, then derives the hold preimage from the leg preimage.
+ * The customer pays the LSP's hold invoice; the LSP opens a fresh channel to the merchant and pays the leg
+ * invoice; settling the leg reveals the secret that settles the hold. The merchant always generates that
+ * secret, so the LSP cannot settle before paying.
+ *
+ * `same_hash` — both invoices carry sha256(S). Nothing to prove: no proving key, no wasm, no ceremony.
+ *               Requires the LSP to run a separate paying node, which it advertises.
+ * `linked`    — the LSP runs one node, so the hashes must differ and `proveLinkage` must build a
+ *               zero-knowledge proof that they share S.
+ *
+ * With no `mode` configured, `same_hash` is chosen whenever the LSP offers it: it is the mode that costs the
+ * merchant nothing.
  */
 import {
   type Asset,
+  type JitMode,
   type JitOrder,
   type JitTerms,
   type LinkageProof,
@@ -14,6 +24,7 @@ import {
   assetUdtScript,
   dualSha256,
   jitForwardAmount,
+  sameHashLink,
 } from "@fiberlsp/protocol";
 import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
 
@@ -29,7 +40,12 @@ export interface JitCheckoutConfig {
   fetchImpl?: typeof fetch;
   randomBytes?: (n: number) => Uint8Array;
   sleep?: (ms: number) => Promise<void>;
-  /** Required for real use: build a proof linking hold_hash and leg_hash without exposing the secret. */
+  /**
+   * Pin the JIT mode. Omit to prefer `same_hash` when the LSP offers it, else `linked`. Pin `linked` only to
+   * keep the customer's hold hash unrelated to the merchant leg's.
+   */
+  mode?: JitMode;
+  /** Required by `linked` mode: build a proof linking hold_hash and leg_hash without exposing the secret. */
   proveLinkage?: (holdHash: string, legHash: string, secretHex: string) => LinkageProof | Promise<LinkageProof>;
   /** Seconds the leg invoice is set to outlive the LSP hold window (covers the on-chain open). Default 1800. */
   legExpiryBufferSeconds?: number;
@@ -45,6 +61,8 @@ export interface JitCheckoutRequest {
 }
 
 export interface JitCheckoutSession {
+  /** The mode this session negotiated. */
+  mode: JitMode;
   /** Show this to the customer: the LSP node's hold invoice. */
   invoice: string;
   /** Customer-facing hold hash. */
@@ -88,15 +106,34 @@ export class JitCheckout {
     return info.jit;
   }
 
+  /** The mode this checkout will use: the pinned one if it is on offer, else the cheapest one that is. */
+  private selectMode(terms: JitTerms): JitMode {
+    const offered = terms.modes ?? ["linked"];
+    const mode = this.cfg.mode ?? (offered.includes("same_hash") ? "same_hash" : "linked");
+    if (!offered.includes(mode)) {
+      throw new JitCheckoutError("unsupported_mode", `LSP does not offer JIT mode "${mode}" (offers: ${offered})`);
+    }
+    if (mode === "linked" && !this.cfg.proveLinkage) {
+      throw new JitCheckoutError("missing_linkage_prover", "linked JIT mode requires a linkage proof builder");
+    }
+    return mode;
+  }
+
   async checkout(req: JitCheckoutRequest): Promise<JitCheckoutSession> {
     const terms = await this.terms();
     if (!terms) throw new JitCheckoutError("no_jit", "this LSP does not offer JIT channels");
-    if (!this.cfg.proveLinkage) {
-      throw new JitCheckoutError("missing_linkage_prover", "JitCheckout requires a linkage proof builder");
-    }
+    const mode = this.selectMode(terms);
 
     const secret = "0x" + hex(this.randomBytes(32));
-    const linked = dualSha256(secret);
+    // Both modes settle the leg with S itself; they differ only in what the hold hash is, and whether the
+    // relationship between the two hashes has to be proven.
+    const link =
+      mode === "same_hash"
+        ? (() => {
+            const l = sameHashLink(secret);
+            return { hold: l.hash, leg: l.hash, legPreimage: l.preimage };
+          })()
+        : dualSha256(secret);
     const net = jitForwardAmount(terms, req.amount);
 
     // The leg must outlive the LSP hold (which the LSP may set up to terms.max_expiry_seconds), or it could
@@ -108,24 +145,25 @@ export class JitCheckout {
       description: req.description ?? "jit checkout (merchant leg)",
       udtTypeScript: assetUdtScript(req.asset),
       expirySeconds: legExpiry,
-      paymentPreimage: linked.legPreimage,
+      paymentPreimage: link.legPreimage,
       hashAlgorithm: "sha256",
     });
     const legHash = legInv.invoice?.data?.payment_hash;
     if (!legHash) throw new JitCheckoutError("no_hash", "merchant node returned no payment_hash");
-    if (legHash !== linked.leg) {
-      throw new JitCheckoutError("hash_mismatch", "node payment_hash does not match linked leg hash");
+    if (legHash !== link.leg) {
+      throw new JitCheckoutError("hash_mismatch", "node payment_hash does not match the expected leg hash");
     }
 
-    const proof = await this.cfg.proveLinkage(linked.hold, linked.leg, secret);
+    const proof = mode === "linked" ? await this.cfg.proveLinkage!(link.hold, link.leg, secret) : undefined;
     const order = await this.req<JitOrder>("POST", "/lsp/v1/jit/orders", {
       target_pubkey: this.cfg.merchantPubkey,
       target_address: this.cfg.merchantAddress,
       asset: req.asset,
-      hold_hash: linked.hold,
-      leg_hash: linked.leg,
+      mode,
+      hold_hash: link.hold,
+      leg_hash: link.leg,
       merchant_invoice: legInv.invoice_address,
-      linkage_proof: proof,
+      ...(proof ? { linkage_proof: proof } : {}),
       amount: asBig(req.amount).toString(10),
       expiry_seconds: req.expirySeconds,
       webhook_url: req.webhookUrl,
@@ -158,7 +196,7 @@ export class JitCheckout {
           const afterReveal = await this.req<JitOrder>(
             "POST",
             `/lsp/v1/jit/orders/${order.jit_order_id}/reveal`,
-            { preimage: linked.legPreimage },
+            { preimage: link.legPreimage },
             token,
           );
           if (afterReveal.state === "settled") return afterReveal;
@@ -170,8 +208,9 @@ export class JitCheckout {
     };
 
     return {
+      mode,
       invoice: order.hold_invoice,
-      paymentHash: linked.hold,
+      paymentHash: link.hold,
       order,
       netAmount: order.forward_amount,
       fee: order.fee,

@@ -126,7 +126,7 @@ complementary capability signal that is authentic but slow to converge for a new
 | `@fiberlsp/protocol` | The LSPS-Fiber contracts: assets, order/JIT/lease/receipt types, fee/rent math, the molecule `Script` encoder, linkage-proof interfaces. | — |
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, channel-opening helpers. | `protocol` |
 | `@fiberlsp/registry` | Static provider registry + gossip-graph discovery, merged by pubkey. | `protocol`, `fiber` |
-| `@fiberlsp/server` | Reference LSP engine + REST API, single-node JIT service, invoice-webhook service, injectable stores. | `protocol`, `fiber` |
+| `@fiberlsp/server` | Reference LSP engine + REST API, JIT service (`linked` and `same_hash`), invoice-webhook service, injectable stores. | `protocol`, `fiber` |
 | `@fiberlsp/client` | Merchant/wallet SDK: discovery, quote comparison, inbound purchase, invoice checkout, JIT checkout, payment watching, streaming rent, ledger. | `protocol`, `fiber`, `registry` |
 
 A wallet or competing LSP can depend on `protocol` (and `fiber`) alone and ignore the reference server.
@@ -171,12 +171,36 @@ the requested asset, whose LSP-side balance covers the requested inbound.
 
 ## JIT checkout
 
-One LSP node receives the customer hold payment, opens a channel to the merchant, pays the merchant leg
-invoice, and settles the customer hold only after the leg has settled. The order of operations is the whole
-point: the payment is held safely, the channel is opened, the net amount is forwarded, and only then is the hold
-settled — deliver to the merchant, or refund the payer.
+The LSP receives the customer's hold payment, opens a channel to the merchant, pays the merchant leg invoice,
+and settles the customer hold only after the leg has settled. The order of operations is the whole point: the
+payment is held safely, the channel is opened, the net amount is forwarded, and only then is the hold settled —
+deliver to the merchant, or refund the payer.
 
-### The linked-hash construction
+### One security property, two ways to get it
+
+**The merchant generates the secret.** The LSP can settle the hold only with a value it does not possess until
+the merchant has claimed its leg, so deliver-or-refund is structural. That single sentence is the security
+model, and both modes below satisfy it identically.
+
+What differs is how many nodes the LSP runs — and therefore whether a zero-knowledge proof is needed at all.
+The LSP advertises what it serves in `LspInfo.jit.modes`; the merchant chooses per order with
+`CreateJitOrderRequest.mode`.
+
+| | `linked` | `same_hash` |
+|---|---|---|
+| LSP nodes | one | two (hold + pay) |
+| Invoice hashes | two, proven linked | one, on both legs |
+| Merchant artifacts | `.wasm` + `.zkey` (37 MB) | none |
+| Merchant work per order | ~2.9 s, ~950 MB RSS | one `sha256` |
+| LSP verification | Groth16, ~10 ms | compare two hashes |
+| Trusted setup | circuit-specific phase 2 | **none** |
+| LSP cost | one node | a second node + capital positioned at it |
+
+`same_hash` is the better trade wherever an LSP can run two processes: it deletes the proof, the proving key,
+the circuit, and the ceremony, and moves the residual cost onto the party that is capitalised and in a repeated
+game. `linked` remains for an LSP that cannot, and is what a merchant must use against a single-node LSP.
+
+### `linked` — two hashes, one node
 
 One FNN node cannot safely hold `invoice(H)` and also send `payment(H)` — it can mark its own invoice paid and
 reject the held TLC. So the hold and the leg use two different hashes derived from one merchant secret `S`. An
@@ -193,6 +217,13 @@ capital it verifies a proof that `A` and `B` come from one hidden `S`: `groth16-
 `∃S : sha256(S)=B ∧ sha256(poseidon(S))=A`. The test-only `exposed-secret` scheme reveals `S` and is not a
 security model — with `S` in hand the LSP could settle the hold without paying the merchant.
 
+The proof is unavoidable here, and it is worth being precise about why. The derivation runs leg → hold, since
+the LSP learns the leg preimage and needs the hold preimage; so whoever knows `S` can compute both. The LSP must
+not know the hold preimage before it pays, therefore it must not know `S`, therefore **only the merchant can
+prove anything about `S`**. Nor can the relation be checked from `A` and `B` alone: that would require a
+homomorphic lock, and SHA-256 annihilates any structure imposed on its preimages. A proof, from the merchant, is
+the only remaining option.
+
 Only the two **invoice** hashes must be SHA-256, because that is how FNN computes `payment_hash`. The
 derivation is ours to choose and carries no security weight: reaching `hold_preimage` means inverting a
 SHA-256 — either `A` directly, or `B` to recover `S`. Poseidon is used purely because it costs ~250
@@ -201,6 +232,38 @@ than 51 MB** for the merchant). It only has to be deterministic and distinct fro
 `hold_preimage` would equal the *public* leg hash and anyone could settle the customer hold. The JS derivation
 and `poseidon.circom` must agree exactly; a divergence makes the circuit unsatisfiable, so it fails at proof
 generation rather than after the merchant leg is paid.
+
+### `same_hash` — one hash, two nodes
+
+The proof above exists only to work around a *single node's* inability to hold and pay one hash. Two nodes
+remove the collision, and with it the entire construction:
+
+```text
+S    = merchant-generated 32-byte secret
+hash = sha256(S)     (both the customer hold invoice and the merchant leg invoice; preimage = S)
+```
+
+The **hold node** mints the customer's hold invoice on `hash`. The **paying node** funds the JIT channel and
+pays the merchant's leg invoice, which carries the same `hash`. The merchant claims, revealing `S` to the paying
+node; the LSP settles the hold with `S`. There is nothing to prove because there is no relation between two
+hashes — there is one hash. `JIT_PAY_FIBER_RPC_URL` names the paying node, and the server refuses to start if it
+resolves to the same node as the hold one.
+
+The paying node is cheap: it pays the merchant over the channel it has just funded, a single direct hop, so it
+needs on-chain funds — which it already needed, being the funder — and no routing liquidity at all.
+
+Two properties this mode must not lose:
+
+- **Routing disjointness.** One hash is live on two payment routes at once. Any node sitting on *both* the
+  customer's route to the hold node and the paying node's route to the merchant would learn `S` from the second
+  and could claim on the first. Our topology makes that set empty: the merchant leg always traverses the
+  freshly-funded channel with no intermediaries, and the customer's payment is held *before* that channel
+  exists, so the merchant cannot yet appear on any route. An LSP that forwards the merchant leg over
+  pre-existing hops rather than a fresh direct channel forfeits this argument and must not use this mode.
+- **Durable handoff.** The paying node learns `S` and the hold node needs it. If the paying node claims and then
+  dies before `S` is persisted, the hold expires, the customer is refunded, and the LSP has paid for nothing.
+  This is the same exposure window `linked` has between forwarding and settling, but it now spans a process
+  boundary, so `JIT_STORE_PATH` stops being an uptime nicety and becomes load-bearing.
 
 ### Timing and expiries
 
@@ -215,16 +278,29 @@ timer is checked against the money-flow rather than assumed:
 - **Leg outlives the hold.** The leg invoice must not expire before the LSP forwards. The client sets the leg
   expiry above the hold window, and `createOrder` validates the leg's absolute expiry from `parse_invoice`,
   rejecting `leg_expiry_too_short`. Expiry is read from the *signed invoice*, never from a claimed field.
-- **Durable, retrying settle.** The leg preimage can lag the payment's `Success`; settlement retries until it
-  lands or the hold nears expiry, and `JitService.resume()` re-drives any order left in flight by a crash —
-  including one already `forwarding`. This requires a persistent `JIT_STORE_PATH`; with the in-memory store a
-  crash leaves a held payment to refund at expiry.
+- **Durable, retrying settle.** Settlement retries until the leg preimage lands or the hold nears expiry, and
+  `JitService.resume()` re-drives any order left in flight by a crash — including one already `forwarding`. This
+  requires a persistent `JIT_STORE_PATH`; with the in-memory store a crash leaves a held payment to refund at
+  expiry.
+- **Where the leg preimage comes from.** The paying node learns it from the TLC fulfillment, but FNN's
+  `get_payment` does not expose it ([finding #4](./upstream-fiber-findings.md)). So today the LSP settles from
+  the merchant's `reveal` call, and reads `get_payment` first only so it will settle without one once FNN
+  surfaces the field. Both modes share this. It bounds what JIT guarantees: a merchant that takes the forward
+  and never reveals costs the LSP the forwarded amount — the customer is still refunded at expiry, and no proof
+  or node topology changes that. Fixing #4 upstream closes it.
 
 ### Trust model
 
-JIT is trustless for the customer and the merchant by construction. The LSP's remaining exposure is the
-**soundness of the linkage proof**: a forged proof for two *unlinked* hashes makes the LSP open a channel, pay
-the merchant leg, and then fail to settle the customer hold — a direct loss.
+JIT is trustless for the customer and the merchant by construction, in both modes.
+
+Under `same_hash` that is the end of it: there is no proof system, no proving key, and no setup, so there is
+nothing left to trust. This is the mode's whole argument.
+
+Under `linked` the LSP has one remaining exposure — the **soundness of the linkage proof**. A forged proof for
+two *unlinked* hashes makes the LSP open a channel, pay the merchant leg, and then fail to settle the customer
+hold: a direct loss. Note who this protects. A backdoored key lets a *merchant* steal from the LSP, so the
+ceremony below is the **LSP's** trust assumption, not the merchant's; the merchant's cost in `linked` is purely
+mechanical, bytes and seconds.
 
 Groth16's proving and verification keys are derived from secret randomness that must be destroyed after the
 setup. Anyone retaining it can forge a proof for a false statement, and that forged proof **verifies against the
@@ -243,18 +319,29 @@ per-circuit — is currently a single contribution and is development-only. It m
 funds.** Production needs a multi-party phase 2: independent contributors each running `zkey contribute` and
 publishing an attestation, finalised with `zkey beacon` against a public unpredictable value.
 
-Two paths make the claim defensible, in increasing strength:
+Four paths make the claim defensible, in increasing strength:
 
-1. **A multi-party phase 2.** Independent contributors each extend the key with their own entropy and publish
+1. **Run `same_hash` instead.** A second LSP node removes the proof, so the setup stops existing. This needs no
+   upstream change and no new cryptography, and it is why `same_hash` is preferred wherever it is available.
+2. **A multi-party phase 2.** Independent contributors each extend the key with their own entropy and publish
    an attestation, and the chain is finalised against a public unpredictable beacon. Soundness then needs only
    *one* of them to have been honest. This costs coordination, not runtime: the proving key, proof size, and
    verification are unchanged. See [`CEREMONY.md`](./CEREMONY.md).
-2. **No SNARK at all.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public tweak `t`,
-   so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and fulfilling
-   one lock yields the opener of the other. This is tracked as an upstream ask in
+3. **A transparent proof system.** Bulletproofs needs no setup at all — its generators are hashed from a public
+   seed, so no secret ever existed to destroy — and it drops the merchant's proving key entirely. It is not free:
+   the prover is slower in wall-clock, and verification becomes linear in circuit size, moving real CPU onto the
+   LSP. That direction is at least coherent, since the setup was the LSP's trust assumption to begin with. The
+   obstacle is practical: the circuit is circom over bn254, and adopting this means rebuilding the SHA-256 gadget
+   against a different backend and curve.
+4. **No proof at all, on one node.** With PTLCs (adaptor signatures) the second lock is `B = A + t·G` for a public
+   tweak `t`, so the linkage is *derivable and verifiable* by anyone with a one-line elliptic-curve check, and
+   fulfilling one lock yields the opener of the other. Upstream HTLC interception would remove the hold invoice —
+   and with it the second hash — outright. Both are tracked in
    [`upstream-fiber-findings.md`](./upstream-fiber-findings.md).
 
 ### Artifact distribution
+
+Applies to `linked` only; `same_hash` merchants download nothing.
 
 The circuit source is in
 [`../packages/protocol/circuits/dual-sha256-linkage`](../packages/protocol/circuits/dual-sha256-linkage);
@@ -271,9 +358,9 @@ The `.zkey` and vk must be a matched pair from the same setup and circuit.
 
 ### Prover footprint
 
-The asymmetry is deliberate: the party with no capital carries the bulky computation, and the party risking
-money carries the 4 KB key that guards it. Measured for the shipped circuit (59,771 constraints, 2^16 domain)
-with snarkjs on Node:
+Applies to `linked` only. The asymmetry is uncomfortable and is the reason `same_hash` exists: the party with no
+capital carries the bulky computation, and the party risking money carries the 4 KB key that guards it. Measured
+for the shipped circuit (59,771 constraints, 2^16 domain) with snarkjs on Node:
 
 | Step | Time | Peak RSS |
 |---|---|---|
@@ -284,8 +371,12 @@ with snarkjs on Node:
 parallelism: capping the prover to one core holds RSS at ~930 MB while tripling wall time, because the memory
 is field-arithmetic buffers on the main thread rather than per-worker copies. There is no tuning knob.
 
-Two ways to cut it, neither needing a protocol change:
+Read it against the right denominator: a JIT order exists to bring a channel into being, and once it exists
+subsequent sales are ordinary routed payments over it. The cost is paid per channel-open, not per checkout.
 
+Three ways to cut it, none needing a protocol change:
+
+- **Use `same_hash`.** The cost goes to zero, not down.
 - **Swap the prover.** `proveLinkage` is an injected hook, so a merchant may drive a native Groth16 prover over
   the same `.zkey` and witness instead of snarkjs.
 - **Prove off the serving path.** The statement mentions only `S` — not the amount, the customer, or the expiry
@@ -294,9 +385,9 @@ Two ways to cut it, neither needing a protocol change:
 
 The circuit itself cannot shrink. Both invoice hashes must be SHA-256 in-circuit, because FNN computes
 `payment_hash` that way and the proof has to bind *both* public hashes to one secret — so two SHA-256 blocks
-(~59k constraints) is the floor for any hash-lock construction. Poseidon already eliminated the one optional
-block: it inlines its round constants, costing 1.6 MB of extra wasm to save 16 MB of proving key and a quarter
-of the proving time. PTLCs would remove the SNARK entirely.
+(~59k constraints) is the floor for any hash-lock construction, and any algebraic gadget between them costs a
+rounding error by comparison. Poseidon already eliminated the one optional block: it inlines its round constants,
+costing 1.6 MB of extra wasm to save 16 MB of proving key and a quarter of the proving time.
 
 ### Latency
 

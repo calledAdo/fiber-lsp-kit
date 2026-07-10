@@ -12,10 +12,21 @@
  *   WATCH_STORE_PATH        — persist invoice watches (survives restart); unset ⇒ in-memory.
  *   WATCH_POLL_ATTEMPTS / WATCH_POLL_INTERVAL_MS — per-watch settlement poll budget.
  *
- *   LINKED_JIT_VK_PATH — Groth16 verification key for single-node linked JIT. When set, JIT channels are
- *                        offered at `/lsp/v1/jit/*`.
+ *   JIT is offered at `/lsp/v1/jit/*` as soon as either mode below is available. Both can run side by side;
+ *   the merchant picks per order and the LSP advertises what it serves in `LspInfo.jit.modes`.
+ *
+ *   `linked`    (one node, merchant proves)
+ *   LINKED_JIT_VK_PATH — Groth16 verification key. Set it to serve `linked`.
  *   JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1 — test-only linked proof mode that reveals the merchant secret.
  *                        Startup fails if this is set together with LINKED_JIT_VK_PATH (no silent downgrade).
+ *
+ *   `same_hash` (two nodes, no proof)
+ *   JIT_PAY_FIBER_RPC_URL — a SECOND FNN node the LSP controls, which opens the JIT channel and pays the
+ *                        merchant leg while FIBER_RPC_URL holds the customer payment. It needs on-chain funds
+ *                        (it is the channel funder) and nothing else. Because the hold and the payment live on
+ *                        different nodes, both legs can carry the same hash: no proving key, no circuit, no
+ *                        ceremony. Startup refuses if it resolves to the same node as FIBER_RPC_URL.
+ *
  *   JIT_STORE_PATH    — persist JIT orders + revealed preimages (survives restart); unset ⇒ in-memory.
  *   JIT_FEE_BPS / JIT_FEE_BASE / JIT_MIN_PAYMENT / JIT_MAX_EXPIRY — pricing (defaults below).
  *
@@ -149,9 +160,32 @@ async function main() {
     allowExposedSecret: process.env.JIT_ALLOW_UNSAFE_EXPOSED_SECRET === "1",
     exposedSecret: exposedSecretVerifier,
   });
-  if (verifiers.length > 0) {
+
+  // The second node enables `same_hash`. Prove it really is a second node before trusting the mode: if both
+  // URLs resolve to one FNN process, that node would be asked to hold and pay the same hash — exactly the
+  // collision `same_hash` claims to have escaped — and the JIT flow would strand a held customer payment.
+  const payRpcUrl = process.env.JIT_PAY_FIBER_RPC_URL;
+  let payRpc: FiberChannelRpcClient | undefined;
+  if (payRpcUrl) {
+    const candidate = new FiberChannelRpcClient({ rpcUrl: payRpcUrl });
+    const payInfo = await candidate.nodeInfo();
+    const payId = payInfo.node_id ?? payInfo.pubkey ?? payInfo.public_key ?? "";
+    if (!payId) throw new Error(`[jit] JIT_PAY_FIBER_RPC_URL (${payRpcUrl}) returned no node identity`);
+    if (lspPubkey && payId.toLowerCase() === lspPubkey.toLowerCase()) {
+      throw new Error(
+        `[jit] refusing to start: JIT_PAY_FIBER_RPC_URL (${payRpcUrl}) is the same node as FIBER_RPC_URL ` +
+          `(${FIBER_RPC_URL}). same_hash mode requires a distinct paying node — one node cannot hold and pay ` +
+          `the same payment hash.`,
+      );
+    }
+    payRpc = candidate;
+    console.log(`[jit] paying node: ${payRpcUrl} (${payId.slice(0, 20)}…) — same_hash available`);
+  }
+
+  if (verifiers.length > 0 || payRpc) {
     jit = new JitService({
       rpc,
+      ...(payRpc ? { payRpc } : {}),
       // JIT is the default provisioning path, so the one-time channel-activation cost is charged here rather
       // than prepaid. The three parts pay for different things:
       //   fee_base — the on-chain open + eventual close, and the risk the merchant makes one sale and leaves.
@@ -167,7 +201,7 @@ async function main() {
         max_expiry_seconds: Number(process.env.JIT_MAX_EXPIRY ?? 3600),
       },
       supportedAssets: defaultOfferings(),
-      linkageVerifier: compositeLinkageVerifier(verifiers),
+      ...(verifiers.length > 0 ? { linkageVerifier: compositeLinkageVerifier(verifiers) } : {}),
       // Match the RUSD offering's min_capacity: an acceptor auto-accepts UDT channels only at/above its
       // auto_accept_amount (10 RUSD on testnet), so small JIT payments still open a 10-RUSD channel.
       minCapacity: process.env.JIT_MIN_CAPACITY ?? "1000000000",
@@ -188,7 +222,10 @@ async function main() {
       );
     }
   } else {
-    console.warn("[jit] disabled: set LINKED_JIT_VK_PATH or JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1");
+    console.warn(
+      "[jit] disabled: set JIT_PAY_FIBER_RPC_URL (same_hash), or LINKED_JIT_VK_PATH / " +
+        "JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1 (linked)",
+    );
   }
   jit?.resume(); // re-drive any JIT order left in flight by a previous run (settle a mid-forward crash)
   const handle = createApi(lsp, { ...(jit ? { jit } : {}) });
@@ -247,7 +284,7 @@ async function main() {
       console.log(`[merchant] invoice-webhook API on /merchant/v1/*  (FNN: ${merchantRpcUrl})`);
     }
     if (jit) {
-      console.log(`[jit] single-node JIT on /lsp/v1/jit/*  (node: ${FIBER_RPC_URL})`);
+      console.log(`[jit] JIT on /lsp/v1/jit/*  modes: [${jit.modes.join(", ")}]  (hold: ${FIBER_RPC_URL})`);
     }
   });
 }
