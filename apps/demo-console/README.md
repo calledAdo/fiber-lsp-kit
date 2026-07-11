@@ -28,5 +28,5 @@ Cloudflare Pages). No build step.
 
 - **`npm run demo`** (repo root) — the whole merchant flow (provision → invoice → settlement webhook →
   reconcile → CSV) run **node-lessly** against the real kit code with a real HTTP webhook sink. No browser.
-- **[`scripts/demo/`](../../scripts/demo)** — reproduce the live node flow (discover → buy → invoice →
-  routed pay → stream rent) with the demo harness scripts.
+- **[`scripts/live/`](../../scripts/live)** — reproduce the live node flow (discover → buy → invoice →
+  routed pay → stream rent) with the live harness scripts (`npm run demo:live`).

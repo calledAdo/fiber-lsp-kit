@@ -10,10 +10,8 @@ docs/superpowers/
 .local-docs/
 docs-private/
 
-# demo handoff artifact
-scripts/demo/.invoice.json
-
-scripts/demo/.lsp.json
+# live-demo handoff artifacts
+scripts/live/.state/
 
 # Circom/SnarkJS generated artifacts
 packages/protocol/circuits/**/build/

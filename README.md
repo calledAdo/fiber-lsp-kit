@@ -15,7 +15,7 @@ conforming implementation.
 | Where to look | For |
 |---|---|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
-| [`scripts/demo/`](./scripts/demo) | runnable scripts reproducing the whole flow on live testnet nodes |
+| [`scripts/live/`](./scripts/live) | runnable scripts reproducing the whole flow on live testnet/mainnet nodes |
 | [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + RFCs for the Fiber team |
 | [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | roadmap · AI usage |
 
@@ -59,8 +59,8 @@ real local HTTP webhook sink, printing the whole flow: detect no inbound → buy
 invoice → get paid → `invoice.paid` webhook → reconcile + export CSV.
 
 **Reproduce it live** against real Fiber nodes (discover → buy inbound → invoice → routed pay → stream rent): set up the
-testnet nodes ([`scripts/demo/node-setup.md`](./scripts/demo/node-setup.md)), then run the scripts in
-[`scripts/demo/`](./scripts/demo).
+testnet nodes ([`scripts/live/node-setup.md`](./scripts/live/node-setup.md)), then run `npm run demo:live`
+(or the individual scripts in [`scripts/live/`](./scripts/live)).
 
 Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
 + merchant REST API, needs an FNN node).
@@ -115,7 +115,7 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 | | |
 |---|---|
-| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce with [`scripts/demo/`](./scripts/demo). |
+| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce with [`scripts/live/`](./scripts/live). |
 | **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
 | **Needed for production** | **for `linked` JIT only, a linkage setup the LSP can trust** — phase 1 is the public Perpetual Powers of Tau, but the circuit-specific phase 2 is a single dev contribution, so `linked` is not yet trustless in practice (running `same_hash` instead removes the setup entirely; a multi-party phase 2, or PTLCs, also removes the dependency) · **`get_payment` must expose the settled preimage** ([finding #4](./docs/upstream-fiber-findings.md)) or the LSP depends on the merchant's `reveal` to recoup the forward · auth + rate-limiting on the LSP REST · native LSP endpoint/capability advertisement in the Fiber graph · an escrowed activation bond to close the *prepaid* path's pay-before-open trust gap · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
 

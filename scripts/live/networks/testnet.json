@@ -1,0 +1,37 @@
+{
+  "chain": "testnet",
+  "asset": {
+    "symbol": "RUSD",
+    "decimals": 8,
+    "script": {
+      "code_hash": "0x1142755a044bf2ee358cba9f2da187ce928c91cd4dc8692ded0337efa677d21a",
+      "hash_type": "type",
+      "args": "0x878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b"
+    }
+  },
+  "nodes": {
+    "lsp": {
+      "rpc": "http://127.0.0.1:8227",
+      "rest": "http://127.0.0.1:8080",
+      "pubkey": "023dda5d5349345ca6a26e7389f2f52e59d85f4f833617865675078e8964230109"
+    },
+    "customer": {
+      "rpc": "http://127.0.0.1:8237"
+    },
+    "merchant": {
+      "rpc": "http://127.0.0.1:8247",
+      "pubkey": "023f29ba8a73ebe47aa8bbc120aac4f5daa562327136e25a4c9c5267abe1d7e631",
+      "address": "/ip4/127.0.0.1/tcp/8248/p2p/QmZVFHXpd51kNWynudyNRKegCGRhGdeERHodi2CqJPvCTr"
+    },
+    "lspPay": {
+      "rpc": "http://127.0.0.1:8257"
+    }
+  },
+  "amounts": {
+    "topup": "500000000",
+    "inbound": "1000000000",
+    "invoice": "300000000",
+    "capacity": "1000000000",
+    "periods": 3
+  }
+}

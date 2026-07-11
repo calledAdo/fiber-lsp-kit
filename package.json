@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
-    "demo": "npm run build && node scripts/merchant-demo.mjs",
+    "demo": "npm run build && node scripts/demo.mjs",
+    "demo:live": "npm run build && node scripts/live/run-all.mjs",
     "typecheck": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",

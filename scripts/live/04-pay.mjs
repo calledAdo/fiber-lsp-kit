@@ -1,34 +1,27 @@
-// DEMO STEP 3 — the customer PAYS THE INVOICE, routed through the LSP, and the merchant's backend books it.
+// LIVE STEP 4 — the customer PAYS THE INVOICE, routed through the LSP, and the merchant's backend books it.
 //
-//   node <this>
+// Reads the invoice from step 3. The customer has no direct channel to the merchant, so the payment ROUTES
+// customer → LSP → merchant. Then the merchant's server-side `InvoiceWebhookService` sees it settle, delivers
+// an `invoice.paid` webhook to a real local sink, and `SettlementLedger` reconciles + exports.
 //
-// Reads the invoice from step 2. The customer (node#2) has no direct channel to the merchant (node#3), so the
-// payment ROUTES node#2 → node#1(LSP) → node#3. Then the merchant's server-side `InvoiceWebhookService` sees it
-// settle, delivers an `invoice.paid` webhook to a real local sink, and `SettlementLedger` reconciles + exports.
-import { udtAsset } from "../../packages/protocol/dist/index.js";
+// Config comes from the selected network profile (NETWORK=<name>, default testnet). See lib/profile.mjs.
 import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { InvoiceWebhookService } from "../../packages/lsp-server/dist/index.js";
 import { SettlementLedger } from "../../packages/client/dist/index.js";
-import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { loadProfile, loadState } from "./lib/profile.mjs";
 
+const P = loadProfile();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const RUSD_SCRIPT = {
-  code_hash: "0x1142755a044bf2ee358cba9f2da187ce928c91cd4dc8692ded0337efa677d21a",
-  hash_type: "type",
-  args: "0x878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b",
-};
-const CUSTOMER_RPC = process.env.CUSTOMER_RPC ?? "http://127.0.0.1:8237";
-const MERCHANT_RPC = process.env.MERCHANT_RPC ?? "http://127.0.0.1:8247";
 
-const { invoice, payment_hash, amount } = JSON.parse(readFileSync(new URL("./.invoice.json", import.meta.url)));
-const rpc2 = new FiberChannelRpcClient({ rpcUrl: CUSTOMER_RPC });
-const rpc3 = new FiberChannelRpcClient({ rpcUrl: MERCHANT_RPC });
+const { invoice, payment_hash, amount } = loadState("invoice");
+const rpc2 = new FiberChannelRpcClient({ rpcUrl: P.nodes.customer.rpc });
+const rpc3 = new FiberChannelRpcClient({ rpcUrl: P.nodes.merchant.rpc });
 const sumRusd = (chs, field) =>
-  chs.filter((c) => c.funding_udt_type_script?.code_hash === RUSD_SCRIPT.code_hash && c.state.state_name === "ChannelReady")
+  chs.filter((c) => P.isRusd(c.funding_udt_type_script) && c.state.state_name === "ChannelReady")
      .reduce((s, c) => s + BigInt(c[field]), 0n);
 const spendable = async (rpc) => sumRusd(await rpc.listChannels(), "local_balance");
-const n = (v) => Number(v) / 1e8;
+const n = (v) => P.fmt(v);
 
 function makeSink() {
   return new Promise((res) => {
@@ -39,7 +32,7 @@ function makeSink() {
   });
 }
 
-console.log(`\n=== STEP 4 · Customer pays ${n(BigInt(amount))} RUSD — routed customer → LSP → merchant ===`);
+console.log(`\n=== STEP 4 · Customer pays ${n(amount)} — routed customer → LSP → merchant  [${P.name}] ===`);
 const cBefore = await spendable(rpc2), mBefore = await spendable(rpc3);
 const sink = await makeSink();
 
@@ -57,13 +50,13 @@ if (pay.status !== "Success") { console.error(`   ❌ payment ${pay.status} ${pa
 
 const cAfter = await spendable(rpc2), mAfter = await spendable(rpc3);
 console.log(`   payment: ${pay.status}  (fee ${pay.fee})`);
-console.log(`   customer RUSD spendable: ${n(cBefore)} → ${n(cAfter)}   (paid ${n(cBefore - cAfter)})`);
-console.log(`   merchant RUSD spendable: ${n(mBefore)} → ${n(mAfter)}   (received ${n(mAfter - mBefore)})`);
-console.log(`   → the gap (${n((cBefore - cAfter) - (mAfter - mBefore))} RUSD) is the LSP's forwarding fee: proof it routed through the hub`);
+console.log(`   customer spendable: ${n(cBefore)} → ${n(cAfter)}   (paid ${n(cBefore - cAfter)})`);
+console.log(`   merchant spendable: ${n(mBefore)} → ${n(mAfter)}   (received ${n(mAfter - mBefore)})`);
+console.log(`   → the gap (${n((cBefore - cAfter) - (mAfter - mBefore))}) is the LSP's forwarding fee: proof it routed through the hub`);
 
 // merchant back-office: server-side invoice.paid webhook + settlement ledger
 const webhooks = new InvoiceWebhookService({ rpc: rpc3, pollAttempts: 20, pollIntervalMs: 500 });
-const watch = webhooks.watchExisting({ invoice, payment_hash: ph, asset: udtAsset(RUSD_SCRIPT, "RUSD"), amount, webhook_url: sink.url, description: "demo order" });
+const watch = webhooks.watchExisting({ invoice, payment_hash: ph, asset: P.udt, amount, webhook_url: sink.url, description: "demo order" });
 await webhooks.drain();
 const event = await sink.received;
 console.log(`   [webhook] ${event.type} → receipt ${event.receipt.receipt_id} · paid=${event.receipt.paid}`);
