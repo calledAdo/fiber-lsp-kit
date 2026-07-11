@@ -38,7 +38,7 @@ Several of these are written up as upstream reports in
 - The offline suite runs through the **real** RPC code path (a scripted transport, not stubbed logic).
 - `npm run demo` exercises the whole merchant flow node-lessly (real kit code + a real webhook sink).
 - `npm run test:live` re-checks the real RPC surface against a running node.
-- The live provision → invoice → routed pay → stream-rent flow is reproducible via `scripts/live/`.
+- The JIT sale flow (LSP/merchant/customer) is reproducible via `scripts/demo/`, over mock nodes or live.
 - JIT behaviour (hold, settle, refund, hold-window semantics) was spiked live against a node before the kit
   code was written. Live testing also surfaced that a **single** FNN node holding and paying one hash silently
   loses funds ([finding #5](./docs/upstream-fiber-findings.md)), which is why the kit ships **two** JIT modes:

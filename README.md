@@ -15,7 +15,7 @@ conforming implementation.
 | Where to look | For |
 |---|---|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
-| [`scripts/live/`](./scripts/live) | runnable scripts reproducing the whole flow on live testnet/mainnet nodes |
+| [`scripts/demo/`](./scripts/demo) | the runnable demo: three roles (LSP/merchant/customer), a JIT sale, mock nodes or live |
 | [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + RFCs for the Fiber team |
 | [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | roadmap · AI usage |
 
@@ -39,7 +39,6 @@ provisioning, plus the merchant tooling to run on it, is this kit.**
 | `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: in-process witness generation + a bundled WebAssembly prover (pure `npm i`, no binary), with an optional native-subprocess backend for speed. Not needed for `same_hash`. |
 | `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `registry/providers.json` | Git-hosted provider registry file; providers can be added by PR, and merchants can download or bundle it. |
-| `apps/demo-console` | Zero-dependency static console that plays the flow (replay or live). |
 
 Boundary note for consumers: import `FiberChannelRpcClient`, `FetchLike`, channel/graph RPC types, and
 `isChannelReady` from `@fiberlsp/fiber`. Registry discovery is available from `@fiberlsp/registry` and is
@@ -47,22 +46,23 @@ re-exported by `@fiberlsp/client` for compatibility.
 
 ## Try it
 
-**The 3-terminal demo — no `fnn`, no faucet.** One story, three roles (LSP, merchant, customer), the version to
-record or run by hand. A merchant with **zero channels** takes a JIT sale; where the proving key is present the
-merchant builds a **real Groth16 proof** the LSP verifies live. A bundled mock-fnn daemon stands in for real
-nodes. See [`scripts/theater/`](./scripts/theater):
+**The demo — three roles, one JIT sale, no `fnn`, no faucet.** LSP, merchant, and customer are each a
+long-running process that logs what it sees. A merchant with **zero channels** takes a sale; where the proving
+key is present the merchant builds a **real Groth16 proof** the LSP verifies live. By default every role uses a
+bundled mock-fnn node. See [`scripts/demo/`](./scripts/demo):
 
 ```bash
 npm install
 npm run demo:lsp        # terminal 1 — the LSP (starts the mock nodes + server, narrates each order)
-npm run demo:merchant   # terminal 2 — the merchant (proves linkage, prints the hold invoice)
-npm run demo:customer   # terminal 3 — the customer (pays it)
+npm run demo:merchant   # terminal 2 — the merchant (zero channels)
+npm run demo:customer   # terminal 3 — the customer
+npm run demo:invoice    # terminal 4 — merchant proves linkage + prints the hold invoice
+npm run demo:pay        #            — customer pays it → LSP opens a channel, forwards, settles
 ```
 
-**Reproduce it live** against real Fiber nodes: the *same* commands with `NETWORK=testnet` (set up and fund the
-nodes first — [`scripts/live/node-setup.md`](./scripts/live/node-setup.md)). The full sequential lifecycle
-(discover → buy inbound → invoice → routed pay → stream rent → JIT) is `npm run demo:live` (or the individual
-scripts in [`scripts/live/`](./scripts/live)).
+**Run it live** by putting a real Fiber node's RPC URL in a role's `fnn` field in
+[`scripts/demo/demo.config.json`](./scripts/demo/demo.config.json) — the commands don't change, and you own
+that node's funding and peering.
 
 Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
 + merchant REST API, needs an FNN node).
@@ -117,7 +117,7 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 | | |
 |---|---|
-| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce with [`scripts/live/`](./scripts/live). |
+| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce on live nodes via [`scripts/demo/`](./scripts/demo) with real endpoints in `demo.config.json`. |
 | **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
 | **Needed for production** | **for `linked` JIT only, a linkage setup the LSP can trust** — phase 1 is the public Perpetual Powers of Tau, but the circuit-specific phase 2 is a single dev contribution, so `linked` is not yet trustless in practice (running `same_hash` instead removes the setup entirely; a multi-party phase 2, or PTLCs, also removes the dependency) · **`get_payment` must expose the settled preimage** ([finding #4](./docs/upstream-fiber-findings.md)) or the LSP depends on the merchant's `reveal` to recoup the forward · auth + rate-limiting on the LSP REST · native LSP endpoint/capability advertisement in the Fiber graph · an escrowed activation bond to close the *prepaid* path's pay-before-open trust gap · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
 

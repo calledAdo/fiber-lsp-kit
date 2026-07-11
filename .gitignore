@@ -11,7 +11,8 @@ docs/superpowers/
 docs-private/
 
 # live-demo handoff artifacts
-scripts/live/.state/
+scripts/demo/.state/
+scripts/demo/.artifacts/
 
 # Circom/SnarkJS generated artifacts
 packages/protocol/circuits/**/build/
