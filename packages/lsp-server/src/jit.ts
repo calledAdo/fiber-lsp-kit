@@ -66,6 +66,8 @@ export interface JitServiceConfig {
   defaultExpirySeconds?: number;
   deliverWebhook?: (url: string, order: JitOrder) => Promise<void>;
   onFraud?: (evidence: { a: string; b: string; preimage: string }, order: JitOrder) => void;
+  /** Operator-facing lifecycle notifications: order accepted (proof verified for `linked`) and each state change. */
+  onEvent?: (e: { event: string; order: JitOrder }) => void;
 }
 
 async function defaultDeliverWebhook(url: string, order: JitOrder): Promise<void> {
@@ -244,6 +246,8 @@ export class JitService {
       order_token: this.cfg.tokenGenerator(),
     };
     this.cfg.store.put(rec);
+    // Reaching here in `linked` mode means admitLinkage verified the proof; in `same_hash` there was none.
+    this.cfg.onEvent?.({ event: "created", order: toWire(rec) });
     return toWire(rec, true);
   }
 
@@ -563,7 +567,10 @@ export class JitService {
     const prev = this.require(id);
     const next = { ...prev, ...patch };
     this.cfg.store.put(next);
-    if (patch.state && patch.state !== prev.state) this.fireWebhook(next);
+    if (patch.state && patch.state !== prev.state) {
+      this.fireWebhook(next);
+      this.cfg.onEvent?.({ event: patch.state, order: toWire(next) });
+    }
     return next;
   }
 

@@ -95,6 +95,27 @@ function defaultOfferings(): AssetOffering[] {
   ];
 }
 
+/** The operator's view of a JIT order, line by line — enabled with JIT_LOG=1. */
+function logJitEvent({ event, order }: { event: string; order: { jit_order_id: string; request: { mode?: string }; channel_outpoint?: string; failure_reason?: string } }): void {
+  if (event === "payment_held") return; // the "opening" line already reports the hold; avoid a duplicate
+  const id = order.jit_order_id.slice(0, 8);
+  const line =
+    event === "created"
+      ? order.request.mode === "linked"
+        ? `linkage proof VERIFIED ✓ — accepted (linked, secret never revealed)`
+        : `accepted (same_hash — two nodes, no proof)`
+      : event === "opening"
+        ? `customer payment held → opening a channel to the merchant…`
+        : event === "forwarding"
+          ? `channel open (${order.channel_outpoint ?? "?"}) → forwarding the merchant leg…`
+          : event === "settled"
+            ? `SETTLED ✓ — merchant paid, then the customer's hold released`
+            : event === "refunded"
+              ? `refunded — ${order.failure_reason ?? ""}`
+              : event;
+  console.log(`[jit] ${id}… ${line}`);
+}
+
 async function main() {
   const rpc = new FiberChannelRpcClient({ rpcUrl: FIBER_RPC_URL });
 
@@ -211,6 +232,8 @@ async function main() {
       },
       supportedAssets: defaultOfferings(),
       ...(verifiers.length > 0 ? { linkageVerifier: compositeLinkageVerifier(verifiers) } : {}),
+      // JIT_LOG=1 narrates each order's lifecycle to stdout — the operator's view of a JIT sale.
+      ...(process.env.JIT_LOG === "1" ? { onEvent: logJitEvent } : {}),
       // Match the RUSD offering's min_capacity: an acceptor auto-accepts UDT channels only at/above its
       // auto_accept_amount (10 RUSD on testnet), so small JIT payments still open a 10-RUSD channel.
       minCapacity: process.env.JIT_MIN_CAPACITY ?? "1000000000",

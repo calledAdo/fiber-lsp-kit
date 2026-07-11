@@ -56,11 +56,23 @@ npm run demo
 
 This drives the **real kit** (LSP engine, invoice-webhook service, settlement ledger) over mock FNN nodes and a
 real local HTTP webhook sink, printing the whole flow: detect no inbound → buy it from the LSP → issue an
-invoice → get paid → `invoice.paid` webhook → reconcile + export CSV.
+invoice → get paid → `invoice.paid` webhook → reconcile + export CSV — and a JIT sale from a zero-channel merchant.
 
-**Reproduce it live** against real Fiber nodes (discover → buy inbound → invoice → routed pay → stream rent): set up the
-testnet nodes ([`scripts/live/node-setup.md`](./scripts/live/node-setup.md)), then run `npm run demo:live`
-(or the individual scripts in [`scripts/live/`](./scripts/live)).
+**The 3-terminal demo** — one story, three roles (LSP, merchant, customer), the version to record or run by
+hand. A merchant with **zero channels** takes a JIT sale; where the proving key is present the merchant builds a
+**real Groth16 proof** the LSP verifies live. Still no `fnn`, no faucet — a bundled mock-fnn daemon stands in.
+See [`scripts/theater/`](./scripts/theater):
+
+```bash
+npm run demo:lsp        # terminal 1 — the LSP (starts the mock nodes + server, narrates each order)
+npm run demo:merchant   # terminal 2 — the merchant (proves linkage, prints the hold invoice)
+npm run demo:customer   # terminal 3 — the customer (pays it)
+```
+
+**Reproduce it live** against real Fiber nodes: the *same* commands with `NETWORK=testnet` (set up and fund the
+nodes first — [`scripts/live/node-setup.md`](./scripts/live/node-setup.md)). The full sequential lifecycle
+(discover → buy inbound → invoice → routed pay → stream rent → JIT) is `npm run demo:live` (or the individual
+scripts in [`scripts/live/`](./scripts/live)).
 
 Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
 + merchant REST API, needs an FNN node).
