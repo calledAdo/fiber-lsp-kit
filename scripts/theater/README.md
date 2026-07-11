@@ -4,8 +4,8 @@ This is the demo to **record** and the demo a judge **runs after forking**. Thre
 actors in a JIT sale — **LSP**, **merchant**, **customer** — and the payment is real code end to end. The only
 thing that changes between "on my laptop" and "on live testnet" is one config field; the commands are identical.
 
-> **The zero-explanation version** is still `npm run demo` (one terminal, ~2 s). This folder is the *staged*
-> version, for a video or a hands-on judge who wants to see the roles interact.
+> This is the *staged* demo — for a video or a hands-on judge who wants to see the roles interact. For the full
+> sequential lifecycle on real nodes, see [`../live/`](../live) (`npm run demo:live`).
 
 ## What you need installed
 

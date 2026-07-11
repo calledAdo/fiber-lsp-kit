@@ -12,7 +12,6 @@
   ],
   "scripts": {
     "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
-    "demo": "npm run build && node scripts/demo.mjs",
     "demo:live": "npm run build && node scripts/live/run-all.mjs",
     "demo:net": "NETWORK=${NETWORK:-local} node scripts/theater/mock-fnn.mjs",
     "demo:lsp": "npm run build && NETWORK=${NETWORK:-local} node scripts/theater/lsp.mjs",

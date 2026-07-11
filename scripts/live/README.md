@@ -2,8 +2,8 @@
 
 > **This folder is a harness — not part of the published SDK.** The product is the protocol, SDK, registry,
 > Fiber adapter, and reference server under `packages/*`; these scripts just *drive* them against live nodes so
-> the flow is reproducible. **No nodes to spare?** `npm run demo` (repo root) runs the same story
-> **node-lessly** in ~2 seconds, JIT act included.
+> the flow is reproducible. **No nodes to spare?** The 3-terminal staged demo in [`../theater/`](../theater)
+> runs the JIT story with a bundled mock-fnn daemon — no real nodes.
 
 Run the whole thing in order, with a preflight, from the repo root:
 

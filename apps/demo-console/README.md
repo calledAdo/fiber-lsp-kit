@@ -26,7 +26,7 @@ Cloudflare Pages). No build step.
 
 ## See also
 
-- **`npm run demo`** (repo root) — the whole merchant flow (provision → invoice → settlement webhook →
-  reconcile → CSV) run **node-lessly** against the real kit code with a real HTTP webhook sink. No browser.
+- **`npm run demo:lsp` / `:merchant` / `:customer`** (repo root) — the 3-terminal staged demo: a JIT sale
+  across LSP, merchant, and customer over a bundled mock-fnn daemon. No `fnn`, no browser. See `scripts/theater/`.
 - **[`scripts/live/`](../../scripts/live)** — reproduce the live node flow (discover → buy → invoice →
   routed pay → stream rent) with the live harness scripts (`npm run demo:live`).

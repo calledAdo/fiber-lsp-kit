@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const demoScripts = [
-  "../../../scripts/demo.mjs",
   "../../../scripts/live/00-setup.mjs",
   "../../../scripts/live/01-discover-lsp.mjs",
   "../../../scripts/live/03-invoice.mjs",

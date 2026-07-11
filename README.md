@@ -47,23 +47,13 @@ re-exported by `@fiberlsp/client` for compatibility.
 
 ## Try it
 
-**Fastest — no node, no faucet, ~2 seconds:**
+**The 3-terminal demo — no `fnn`, no faucet.** One story, three roles (LSP, merchant, customer), the version to
+record or run by hand. A merchant with **zero channels** takes a JIT sale; where the proving key is present the
+merchant builds a **real Groth16 proof** the LSP verifies live. A bundled mock-fnn daemon stands in for real
+nodes. See [`scripts/theater/`](./scripts/theater):
 
 ```bash
 npm install
-npm run demo
-```
-
-This drives the **real kit** (LSP engine, invoice-webhook service, settlement ledger) over mock FNN nodes and a
-real local HTTP webhook sink, printing the whole flow: detect no inbound → buy it from the LSP → issue an
-invoice → get paid → `invoice.paid` webhook → reconcile + export CSV — and a JIT sale from a zero-channel merchant.
-
-**The 3-terminal demo** — one story, three roles (LSP, merchant, customer), the version to record or run by
-hand. A merchant with **zero channels** takes a JIT sale; where the proving key is present the merchant builds a
-**real Groth16 proof** the LSP verifies live. Still no `fnn`, no faucet — a bundled mock-fnn daemon stands in.
-See [`scripts/theater/`](./scripts/theater):
-
-```bash
 npm run demo:lsp        # terminal 1 — the LSP (starts the mock nodes + server, narrates each order)
 npm run demo:merchant   # terminal 2 — the merchant (proves linkage, prints the hold invoice)
 npm run demo:customer   # terminal 3 — the customer (pays it)
