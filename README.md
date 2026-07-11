@@ -12,9 +12,6 @@ server, and a wallet SDK to **buy per-asset inbound**, then **invoice → get pa
 It is **infrastructure, not an app** — the **LSPS-Fiber** protocol is the product; the server is one
 conforming implementation.
 
-*Submitted to* ***Gone in 60ms: Fiber Network Infrastructure Hackathon*** *under* **Category 3 — Merchant,
-Liquidity, LSP & Multi-Asset Infrastructure.**
-
 | Where to look | For |
 |---|---|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
