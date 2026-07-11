@@ -12,6 +12,9 @@ server, and a wallet SDK to **buy per-asset inbound**, then **invoice → get pa
 It is **infrastructure, not an app** — the **LSPS-Fiber** protocol is the product; the server is one
 conforming implementation.
 
+*Submitted to* ***Gone in 60ms: Fiber Network Infrastructure Hackathon*** *under* **Category 3 — Merchant,
+Liquidity, LSP & Multi-Asset Infrastructure.**
+
 | Where to look | For |
 |---|---|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
@@ -60,6 +63,10 @@ npm run demo:invoice    # terminal 4 — merchant proves linkage + prints the ho
 npm run demo:pay        #            — customer pays it → LSP opens a channel, forwards, settles
 ```
 
+On a fresh clone the merchant fetches the `linked` proving artifacts from the release with
+`npm run demo:merchant -- --download` (and the LSP its key with `npm run demo:lsp -- --download`); without them
+the demo runs the no-proof `same_hash` mode. Details in [`scripts/demo/README.md`](./scripts/demo/README.md).
+
 **Run it live** by putting a real Fiber node's RPC URL in a role's `fnn` field in
 [`scripts/demo/demo.config.json`](./scripts/demo/demo.config.json) — the commands don't change, and you own
 that node's funding and peering.
@@ -83,8 +90,9 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   **`same_hash`** gives the LSP a second node — one holds, one pays — and both legs carry one hash. There is
   nothing to prove: **no proving key, no circuit, no trusted setup**, and the merchant ships a single `sha256`.
   **`linked`** is for a single-node LSP: the two hashes must differ, so the merchant proves in zero knowledge
-  that they share a secret (Groth16), which costs it an ~18 MB artifact download (key + circuit) and a bundled
-  wasm prover that installs with `npm i` — no binary, no native toolchain.
+  that they share a secret (Groth16), which costs it a ~19 MB one-time artifact download (proving key + circuit,
+  fetched from a versioned release and sha256-verified) and a bundled wasm prover that installs with `npm i` —
+  no binary, no native toolchain.
   Merchants prefer `same_hash` automatically when it is offered. See
   [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).
 - **Leasing.** After activation, **streaming** rent is paid in the **channel's own asset** by keysend out of
@@ -108,7 +116,12 @@ The full **protocol, REST API, and fee model** are in **[`docs/ARCHITECTURE.md`]
 FNN integration facts pinned from source are in **[`AI-USAGE.md`](./AI-USAGE.md)**.
 
 ```ts
-// A fresh wallet with only CKB buys 10 RUSD of INBOUND capacity:
+// A merchant with ZERO channels takes its first sale — the sale itself buys the channel:
+const sale = await new JitCheckout({ rpc, lsp, merchantPubkey }).checkout({ asset: RUSD, amount: "2000000000" });
+showCustomer(sale.invoice); // a HOLD invoice — the payment is captured and held
+await sale.settle();        // the LSP opens the channel, pays the merchant, then releases the hold
+
+// Or provision inbound ahead of demand, without a customer (prepaid, CKB activation fee):
 const order = await lsp.buyInboundLiquidity({ asset: RUSD, amount: "1000000000", feeMode: "prepaid", targetPubkey, targetAddress, payFee });
 order.state; // "channel_active" — it can now RECEIVE RUSD, having never held any
 ```

@@ -16,7 +16,8 @@ if you built the circuit, otherwise fetched from a release (see *Artifacts* belo
 
 ## Run it
 
-Three terminals for the servers, a fourth for the actions:
+Three terminals for the servers, a fourth for the actions. **Start them in this order** — the LSP terminal
+boots the mock nodes, so the merchant and customer have something to connect to:
 
 ```bash
 # terminal 1 — the LSP (also starts the mock nodes; narrates every order)
@@ -63,16 +64,18 @@ Mix freely: e.g. a live LSP with mock customer/merchant. The commands don't chan
 ## Artifacts (the `linked` ZK path)
 
 Each server resolves what its role needs — **LSP: the verification key; merchant: the proving key + circuit
-wasm** — from the paths in `demo.config.json`. If they are missing it will, with `--download` (or a `[y/N]`
-prompt), fetch them from the release named in `demo.config.json`'s `release` field:
+wasm** — from the paths in `demo.config.json`. If they are already on disk (e.g. a local circuit build) they
+are used as-is. Otherwise, `--download` (or a `[y/N]` prompt) fetches them from the release in
+`demo.config.json`'s `release` field — **pre-set to the published `v0.1.0` release** — sha256-verifies each
+against the release `SHA256SUMS`, and caches them in `.artifacts/` (so later runs skip the download):
 
 ```bash
-npm run demo:lsp -- --download
-npm run demo:merchant -- --download
+npm run demo:lsp -- --download        # LSP: verification_key.json
+npm run demo:merchant -- --download   # merchant: linkage.ark.gz (~17 MB) + linkage.wasm
 ```
 
-If the artifacts can't be obtained and the LSP has two endpoints, it falls back to `same_hash`. To get `linked`
-on a fresh clone without a release, build the circuit once — see
+If the artifacts can't be obtained and the LSP has two endpoints, it falls back to `same_hash` (no artifacts
+needed). To build the artifacts yourself instead of downloading, see
 [`../../packages/protocol/circuits/dual-sha256-linkage/README.md`](../../packages/protocol/circuits/dual-sha256-linkage/README.md).
 
 ## Pieces
