@@ -30,9 +30,17 @@ npm run demo:merchant
 npm run demo:customer
 
 # terminal 4 — drive the sale
-npm run demo:invoice     # merchant builds the proof + prints the hold invoice
-npm run demo:pay         # customer pays it → LSP opens a channel, forwards, settles
+npm run demo:invoice        # merchant builds the proof + prints the hold invoice
+npm run demo:pay            # customer pays it → LSP opens a channel, forwards, settles
+
+# then, now that a channel is open:
+npm run demo:direct-invoice # merchant issues a PLAIN invoice (no hold, no proof)
+npm run demo:direct-pay     # customer pays it directly over the existing channel
+npm run demo:rent           # merchant streams rent to the LSP (keysend, a few periods)
 ```
+
+The first sale (`invoice` + `pay`) is JIT — it opens the channel. Everything after is ordinary: `direct-invoice`
+/ `direct-pay` is a normal payment over the now-open channel, and `rent` streams the lease out of revenue.
 
 Watch the three server terminals narrate it:
 

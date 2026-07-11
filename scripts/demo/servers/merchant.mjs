@@ -9,7 +9,7 @@
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
-import { JitCheckout, LspClient } from "../../../packages/client/dist/index.js";
+import { JitCheckout, LspClient, InvoiceService, StreamingLease } from "../../../packages/client/dist/index.js";
 import { loadConfig, saveState } from "../lib/config.mjs";
 import { ensureArtifacts } from "../lib/artifacts.mjs";
 
@@ -63,9 +63,44 @@ async function startCheckout() {
   return { invoice: session.invoice, mode: session.mode, netAmount: session.netAmount, fee: session.fee };
 }
 
+// A plain invoice over an ALREADY-OPEN channel (run after the JIT sale) — no hold, no proof, direct settlement.
+async function directInvoice() {
+  const svc = new InvoiceService({ rpc: merchantRpc });
+  const issued = await svc.issue({ asset: cfg.udt, amount: cfg.amounts.jitPayment, description: "repeat sale (channel already open)" });
+  console.log(`[merchant] direct invoice (channel already open): ${issued.invoice}`);
+  saveState("direct-invoice", { invoice: issued.invoice, paymentHash: issued.paymentHash });
+  return { invoice: issued.invoice, paymentHash: issued.paymentHash };
+}
+
+// Stream rent to the LSP for a few periods — keysend out of revenue over the same channel.
+async function streamRent() {
+  const info = await lsp.getInfo();
+  const lease = new StreamingLease({
+    rpc: merchantRpc,
+    lspPubkey: info.lsp_pubkey,
+    terms: { asset: cfg.udt, capacity: cfg.amounts.jitCapacity, rate_bps_per_period: 5, period_seconds: 86400, grace_periods: 2 },
+    poll: { attempts: 5, intervalMs: 0, sleep: async () => {} },
+    handlers: {
+      onPaid: (p) => console.log(`[merchant] rent period ${p.period}: paid ${cfg.fmt(p.amount)} (keysend ${p.payment_hash?.slice(0, 14)}…)`),
+      onSkip: (p) => console.log(`[merchant] rent period ${p.period}: skipped — ${p.reason}`),
+    },
+  });
+  const periods = 3;
+  for (let i = 0; i < periods; i++) await lease.payDue();
+  console.log(`[merchant] rent streamed: ${lease.periodsPaid} period(s), total ${cfg.fmt(lease.totalPaid)}`);
+  return { periodsPaid: lease.periodsPaid, totalPaid: lease.totalPaid.toString(), ratePerPeriod: lease.rent().toString() };
+}
+
+const routes = {
+  "/request-invoice": startCheckout,
+  "/direct-invoice": directInvoice,
+  "/stream-rent": streamRent,
+};
+
 createServer((req, res) => {
-  if (req.method !== "POST" || req.url !== "/request-invoice") { res.writeHead(404).end(); return; }
-  startCheckout()
+  const handler = req.method === "POST" && routes[req.url];
+  if (!handler) { res.writeHead(404).end(); return; }
+  handler()
     .then((out) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out)); })
     .catch((e) => { console.error(`[merchant] ${e.message}`); res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
 }).listen(cfg.roles.merchant.control, "127.0.0.1", () =>

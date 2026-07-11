@@ -33,9 +33,11 @@ function makeNode(role, port) {
       case "connect_peer": return {};
       case "graph_nodes": return { nodes: Object.values(registry).map((n) => ({ node_id: n.pubkey, addresses: [] })) };
       case "new_invoice": {
-        const hash = p0.payment_hash ?? sha256(p0.payment_preimage);
+        // A node-generated invoice (no hash/preimage supplied) gets a random preimage — so it settles directly.
+        const preimage = p0.payment_preimage ?? ("0x" + createHash("sha256").update(`${role}:${seq}:${Date.now()}`).digest("hex"));
+        const hash = p0.payment_hash ?? sha256(preimage);
         const addr = `fibt_${role}_${seq++}`;
-        world.invoices.set(addr, { hash, amount: BigInt(p0.amount).toString(), preimage: p0.payment_preimage, issuer: role });
+        world.invoices.set(addr, { hash, amount: BigInt(p0.amount).toString(), preimage: p0.payment_hash ? undefined : preimage, issuer: role });
         status.set(hash, "Open");
         return { invoice_address: addr, invoice: { amount: BigInt(p0.amount).toString(), data: { payment_hash: hash } } };
       }
@@ -64,6 +66,12 @@ function makeNode(role, port) {
       case "list_channels": return { channels: p0.pubkey ? channels.filter((c) => c.pubkey === p0.pubkey) : channels };
       case "abandon_channel": return {};
       case "send_payment": {
+        if (!p0.invoice && p0.target_pubkey) { // keysend (e.g. streaming rent): spontaneous pay to a pubkey
+          if (p0.dry_run) return { status: "Success", fee: "0x0" };
+          const ph = "0x" + createHash("sha256").update(`ks:${role}:${seq++}:${Date.now()}`).digest("hex");
+          payments.set(ph, { status: "Success", fee: "0x0" });
+          return { payment_hash: ph, status: "Success", fee: "0x0" };
+        }
         const inv = world.invoices.get(p0.invoice);
         if (!inv) return { status: "Failed" };
         if (inv.preimage) { // a normal/leg invoice: the payer learns the preimage — settled now

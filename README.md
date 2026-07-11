@@ -114,7 +114,9 @@ FNN integration facts pinned from source are in **[`AI-USAGE.md`](./AI-USAGE.md)
 
 ```ts
 // A merchant with ZERO channels takes its first sale — the sale itself buys the channel:
-const sale = await new JitCheckout({ rpc, lsp, merchantPubkey }).checkout({ asset: RUSD, amount: "2000000000" });
+const sale = await new JitCheckout({ rpc, lsp, merchantPubkey }).checkout({
+  asset: RUSD, amount: "2000000000", channelCapacity: "10000000000", // pay 20 RUSD; open a 100 RUSD channel
+});
 showCustomer(sale.invoice); // a HOLD invoice — the payment is captured and held
 await sale.settle();        // the LSP opens the channel, pays the merchant, then releases the hold
 
