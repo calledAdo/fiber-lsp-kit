@@ -15,11 +15,11 @@ const rpc = new FiberChannelRpcClient({ rpcUrl: cfg.roles.customer.fnn[0] });
 
 async function pay(invoice) {
   console.log(`[customer] paying hold invoice ${invoice}…`);
-  const sent = await rpc.call("send_payment", [{ invoice }]);
+  const sent = await rpc.sendPayment({ invoice });
   const ph = sent.payment_hash;
   console.log(`[customer] ${ph.slice(0, 16)}… → ${sent.status ?? "sent"} (captured + HELD while the LSP opens the channel)`);
   for (let i = 0; i < 120; i++) {
-    const p = await rpc.call("get_payment", [{ payment_hash: ph }]);
+    const p = await rpc.getPayment(ph);
     if (p.status === "Success") { console.log(`[customer] ✅ SUCCESS — the LSP settled the hold (it paid the merchant first)`); return { status: "Success", payment_hash: ph }; }
     if (p.status === "Failed") { console.log(`[customer] ❌ failed / refunded`); return { status: "Failed", payment_hash: ph }; }
     await sleep(1000);
