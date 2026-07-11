@@ -1,5 +1,5 @@
 {
-  "release": "",
+  "release": "https://github.com/calledAdo/fiber-lsp-kit/releases/download/v0.1.0",
   "lspRest": "http://127.0.0.1:9080",
   "asset": {
     "symbol": "RUSD",
