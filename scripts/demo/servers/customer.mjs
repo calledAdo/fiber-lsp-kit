@@ -14,7 +14,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rpc = new FiberChannelRpcClient({ rpcUrl: cfg.roles.customer.fnn[0] });
 
 async function pay(invoice) {
-  console.log(`[customer] paying hold invoice ${invoice}…`);
+  // The amount is encoded in the invoice — the payer never supplies one. Read it back to show what we're paying.
+  const parsed = await rpc.parseInvoice(invoice).catch(() => undefined);
+  const amount = parsed?.invoice?.amount;
+  console.log(`[customer] paying ${amount ? cfg.fmt(amount) : "invoice"} — ${invoice}…`);
   const sent = await rpc.sendPayment({ invoice });
   const ph = sent.payment_hash;
   console.log(`[customer] ${ph.slice(0, 16)}… → ${sent.status ?? "sent"} (captured + HELD while the LSP opens the channel)`);

@@ -20,6 +20,7 @@
     "demo:direct-invoice": "node scripts/demo/actions/direct-invoice.mjs",
     "demo:direct-pay": "node scripts/demo/actions/direct-pay.mjs",
     "demo:rent": "node scripts/demo/actions/stream-rent.mjs",
+    "demo:e2e": "npm run build && node scripts/demo/e2e.mjs",
     "typecheck": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",
