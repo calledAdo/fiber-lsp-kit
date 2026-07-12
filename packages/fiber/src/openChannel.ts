@@ -47,6 +47,23 @@ export interface OpenChannelAndAwaitArgs {
    * retry that lands after the caller gave up must not strand liquidity); the lease flow leaves it for retry.
    */
   abandonOrphanOnTimeout?: boolean;
+  /**
+   * Re-establish the session and retry `open_channel` when it fails with FNN's "feature not found / waiting for
+   * Init" error. This is the JIT-to-a-brand-new-node case (see upstream finding #11): the acceptor has no
+   * channel yet, so FNN's inbound-no-channel protection evicts/flaps the session and clears its exchanged
+   * `features`, and `open_channel`'s `check_feature_compatibility` then rejects. A fresh `connect_peer`
+   * (save=false, so it doesn't feed the saved-peer reconnect flapping) re-exchanges `Init`; firing `open_channel`
+   * immediately after lands the funding handshake inside the ~30s window, and once the channel is pending the
+   * peer is no longer "no-channel" and is no longer evicted. Off for the lease flow, whose acceptor is
+   * already an established peer. Default retry count is 4.
+   */
+  reconnectOnFeatureMiss?: boolean;
+  featureRetryAttempts?: number;
+}
+
+/** FNN's rejection when the acceptor's `Init`/features aren't in `peer_session_map` (upstream finding #11). */
+function isFeatureMiss(e: unknown): boolean {
+  return /feature not found|waiting for peer to send Init/i.test(String((e as Error)?.message ?? e));
 }
 
 /**
@@ -64,12 +81,28 @@ export async function openChannelAndAwait(
   }
 
   const before = new Set((await rpc.listChannels(args.pubkey)).map((c) => c.channel_id));
-  await rpc.openChannel({
+  const open = () => rpc.openChannel({
     pubkey: args.pubkey,
     fundingAmount: args.fundingAmount,
     udtTypeScript: assetUdtScript(args.asset),
     public: args.public ?? true,
   });
+  if (args.reconnectOnFeatureMiss && args.address) {
+    const tries = args.featureRetryAttempts ?? 4;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await open();
+        break;
+      } catch (e) {
+        if (!isFeatureMiss(e) || attempt >= tries - 1) throw e;
+        // Session was evicted/flapped and lost its features: force a fresh Init exchange, then retry at once.
+        try { await rpc.connectPeer(args.address, false); } catch { /* dial may race the flap; the retry covers it */ }
+        await args.sleep(args.pollIntervalMs);
+      }
+    }
+  } else {
+    await open();
+  }
 
   const wantId = canonicalAssetId(args.asset);
   const isOurs = (c: RawChannel) => !before.has(c.channel_id) && canonicalAssetId(channelAsset(c)) === wantId;

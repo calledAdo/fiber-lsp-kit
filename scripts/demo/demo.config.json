@@ -19,9 +19,15 @@
     "jitPayment": "2000000000",
     "jitCapacity": "10000000000"
   },
+  "jit": {
+    "minPayment": "1",
+    "feeBase": "0",
+    "feeBps": 100,
+    "minCapacity": "1000000000"
+  },
   "roles": {
     "lsp": { "fnn": [], "control": 7001 },
-    "merchant": { "fnn": [], "control": 7002 },
+    "merchant": { "fnn": [], "p2p": "/ip4/127.0.0.1/tcp/8248", "control": 7002 },
     "customer": { "fnn": [], "control": 7003 }
   },
   "mock": {

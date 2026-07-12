@@ -50,10 +50,15 @@ const env = {
   FIBER_RPC_URL: lspEndpoints[0],
   LSP_TRUST_SETTLE: "1",
   JIT_LOG: "1",
-  READY_POLL_ATTEMPTS: "50",
+  READY_POLL_ATTEMPTS: cfg.needsMock ? "50" : "150",
   READY_POLL_INTERVAL_MS: cfg.needsMock ? "50" : "5000",
   ...(twoNodes ? { JIT_PAY_FIBER_RPC_URL: lspEndpoints[1] } : {}),
   ...(vkPath ? { LINKED_JIT_VK_PATH: vkPath } : {}),
+  // JIT pricing/limits — kept small for the demo so any amount is orderable (the amount is the payer's choice).
+  ...(cfg.jit?.minPayment !== undefined ? { JIT_MIN_PAYMENT: String(cfg.jit.minPayment) } : {}),
+  ...(cfg.jit?.feeBase !== undefined ? { JIT_FEE_BASE: String(cfg.jit.feeBase) } : {}),
+  ...(cfg.jit?.feeBps !== undefined ? { JIT_FEE_BPS: String(cfg.jit.feeBps) } : {}),
+  ...(cfg.jit?.minCapacity !== undefined ? { JIT_MIN_CAPACITY: String(cfg.jit.minCapacity) } : {}),
 };
 
 const server = spawn(process.execPath, [join(repoRoot, "packages/lsp-server/dist/server.js")], { stdio: "inherit", env });

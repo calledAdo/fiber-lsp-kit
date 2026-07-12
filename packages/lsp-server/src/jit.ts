@@ -521,6 +521,9 @@ export class JitService {
       pollIntervalMs: this.cfg.pollIntervalMs,
       sleep: this.cfg.sleep,
       abandonOrphanOnTimeout: true,
+      // The acceptor is a brand-new no-channel node; FNN evicts/flaps its session and clears its features,
+      // so refresh the session and retry on the "feature not found" rejection (upstream finding #11).
+      reconnectOnFeatureMiss: true,
     });
     return ready?.channel_outpoint ?? undefined;
   }

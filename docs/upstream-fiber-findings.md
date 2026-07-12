@@ -267,3 +267,47 @@ the default discovery path and the gossip graph as a slower, authenticating laye
 becomes relayable and on new peer connections — and/or relay a buffered `node_announcement` to peers once the
 supporting channel is known, so capability discovery converges on roughly the same timescale as channel
 discovery. Relates to #3 (native LSP capability advertisement) and #8 (no push/subscription surface).
+
+## 11. Inbound no-channel-peer protection makes an LSP unable to open a JIT channel to a brand-new node
+
+**Symptom.** An LSP (funder) tries to `open_channel` to a freshly-started node that has **no channel yet** — the
+exact case JIT/LSP provisioning targets. It fails with:
+
+```
+Invalid parameter: Peer Pubkey(...)'s feature not found, waiting for peer to send Init message
+```
+
+even though `list_peers` on both sides shows them connected. Verified live on testnet with two byte-identical
+`fnn` builds (same sha256, commit `332141a`), same `chain_hash`, correct peer-ids — so it is not a version,
+chain, or addressing problem.
+
+**Mechanism (traced in source).** `open_channel` calls `check_feature_compatibility` (`network.rs:4742`),
+which reads the peer's `features` from `peer_session_map`. That field is only set in `on_init_msg` when the
+peer's `Init` is received **and the session survives**. Two protections from
+[#1200 "Implement inbound and reconnect protections"](https://github.com/nervosnetwork/fiber/pull/1200) defeat
+this for a no-channel peer:
+- `enforce_inbound_peer_budget` / inbound-no-channel handling **disconnects the fresh peer ~30s after connect**
+  (it is an inbound peer with no channel). Debug logs show the good `Outbound` session exchange `Init`
+  (`"Peer ... connected"`) and then close at +30s.
+- The funder's saved-peer reconnect then **flaps** dials to the fresh node (observed 125 open/close cycles),
+  and each `on_peer_connected` re-inserts the peer into `peer_session_map` with `features: None`, clobbering
+  the features from the good session.
+
+**Effect.** A JIT/LSP funder cannot reliably keep a session with a brand-new acceptor long enough to run
+`open_channel` — the very peer JIT exists to serve is treated as a low-priority inbound peer and evicted. The
+customer's held payment then correctly refunds (deliver-or-refund works), but the channel never opens.
+
+**Ask.** Exempt a peer with a **pending/just-requested channel open** from inbound-no-channel eviction (grace
+window keyed on `to_be_accepted_channels` / an in-flight `OpenChannel`), and/or let a funder pin an outbound
+session to the acceptor for the duration of the open. Also avoid overwriting a live session's `features` when a
+concurrent reconnect attempt for the same pubkey opens and immediately closes. Relates to #2 (auto-accept) and
+#7 (zero-conf JIT).
+
+**Client-side workaround (shipped here).** Since the funder-initiated *outbound* session is not subject to this
+protection, `openChannelAndAwait` (`packages/fiber/src/openChannel.ts`) accepts `reconnectOnFeatureMiss`: on the
+"feature not found" rejection it re-dials the acceptor (`connect_peer`, unsaved) and retries `open_channel`
+immediately, landing inside the eviction window. JIT (`packages/lsp-server/src/jit.ts`) opts in; the acceptor
+also needs to advertise a dialable multiaddr (`target_address` on the JIT order) so the funder has somewhere to
+dial. Verified live end-to-end on testnet: a merchant node with zero channels received a JIT-opened channel and
+a settled payment. This works around the symptom but doesn't fix the underlying eviction — the upstream ask
+above still stands.
