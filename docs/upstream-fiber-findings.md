@@ -222,6 +222,30 @@ channel, and payment state transitions (Lightning's `invoicestream` / channel-ev
 
 ---
 
+## 9. (docs/enhancement) `list_payments` / `get_payment` don't return `amount` or `udt_type_script`
+
+**Severity:** low-medium (blocks node-level accounting; workaround exists via invoices)
+
+**What happens.** Probed live against v0.9.0-rc5 (testnet, 2026-07-12): both `list_payments` and
+`get_payment` return `{ payment_hash, status, created_at, last_updated_at, failed_error, fee,
+custom_records }` for every payment observed — including settled UDT payments — with **no `amount` and no
+`udt_type_script` field**, even though the Payment API docs describe/imply them. `fee` and `status` are
+present and reliable.
+
+**Why it matters.** A node's own payment ledger is the natural place to reconcile what an LSP (or any
+integrator) has actually paid out — total forwarded per asset, fees earned, a P&L — without maintaining a
+separate in-memory or DB ledger that a restart can lose. Without `amount`/asset on the payment record, that
+reconciliation isn't possible from `list_payments` alone; a caller has to keep its own record of what each
+`payment_hash` was for (e.g. by remembering the invoice it paid), defeating the point of having a durable
+node-side ledger. We hit this building `LspLedger` (`packages/lsp-server/src/ledger.ts`): fee/count/status
+aggregation works; per-asset amount totals silently read zero against a live node.
+
+**Ask.** Populate `amount` and `udt_type_script` (or an asset identifier) on `list_payments`/`get_payment`
+records — from the invoice when one was paid, from the `send_payment` args for a keysend — so the payment
+ledger is self-sufficient for accounting.
+
+---
+
 ## 9. (RFC sketch) PTLCs would make single-node atomic JIT trivially trustless
 
 **Severity:** low (enhancement; unlocks a cleaner construction)

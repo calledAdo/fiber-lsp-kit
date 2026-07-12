@@ -129,18 +129,22 @@ export interface PaymentResult {
 }
 
 /**
- * A payment as returned by `list_payments` — the node's durable payment ledger. Field shapes are
- * **docs-derived** (Payment API), NOT yet verified live; probe against a testnet node before relying on
- * amounts for accounting. Numeric fields follow CKB's 0x-hex convention; convert with `asBig`.
+ * A payment as returned by `list_payments` — the node's durable payment ledger.
+ *
+ * **Verified live (v0.9.0-rc5, testnet, 2026-07-12) against both `list_payments` and `get_payment`:** the
+ * live response is `{ payment_hash, status, created_at, last_updated_at, failed_error, fee, custom_records }`
+ * — `amount` and `udt_type_script` are declared here (docs mention them) but were **absent from every live
+ * record observed**, including settled UDT payments. Treat them as optional/best-effort, not reliable for
+ * accounting; `fee` and `status` were present and trustworthy. Numeric fields follow CKB's 0x-hex convention.
  */
 export interface RawPayment {
   payment_hash: string;
   status: PaymentStatus;
-  /** Amount paid, hex base units of the payment asset. */
+  /** Amount paid, hex base units of the payment asset. Not populated by FNN v0.9.0-rc5 — see note above. */
   amount?: string;
-  /** Routing fee paid, hex shannons. */
+  /** Routing fee paid, hex shannons. Verified live — reliably present. */
   fee?: string;
-  /** The channel asset this payment moved (omitted for CKB). */
+  /** The channel asset this payment moved. Not populated by FNN v0.9.0-rc5 — see note above. */
   udt_type_script?: UdtTypeScript | null;
   /** Creation time, hex u64 ms since epoch. */
   created_at?: string;
@@ -311,8 +315,10 @@ export class FiberChannelRpcClient {
    * (which only drops a never-Ready open). This is how an LSP reclaims capital from a lease the merchant
    * stopped paying rent on, or how a merchant ends a lease it no longer wants. Either party may initiate.
    *
-   * Shape is **docs-derived** (Channel API: `shutdown_channel { channel_id, force?, fee_rate? }`), NOT yet
-   * verified live — probe the real RPC before trusting the return/close semantics.
+   * **Param shape verified live** (v0.9.0-rc5, testnet, 2026-07-12): `channel_id`/`force`/`fee_rate` are all
+   * accepted by the node (a bogus channel id reaches "Channel not found", never a param-shape error). The
+   * actual close/return-of-funds behavior was NOT exercised live — only the request shape was probed, to
+   * avoid closing a real channel outside a deliberate test.
    */
   shutdownChannel(args: ShutdownChannelArgs): Promise<null> {
     const params: Record<string, unknown> = { channel_id: args.channelId };
@@ -403,10 +409,12 @@ export class FiberChannelRpcClient {
 
   /**
    * The node's durable payment ledger — every payment it has sent, across restarts. This is what lets an LSP
-   * reconcile fees earned and rent collected without keeping its own in-memory tally (see `LspLedger`).
+   * reconcile fee/status history without keeping its own in-memory tally (see `LspLedger`).
    *
-   * Shape is **docs-derived** (Payment API: `list_payments`), NOT yet verified live — probe before trusting
-   * amounts for accounting.
+   * **Verified live** (v0.9.0-rc5, testnet, 2026-07-12) — see `RawPayment` for the shape actually observed.
+   * Note: `amount`/`udt_type_script` were absent from every live record, so gross-amount reconciliation
+   * (`LspLedger`'s per-asset `sent` totals) is currently a docs-promised capability the live node doesn't
+   * back — count/fee/status totals are trustworthy, `sent` is not, until cross-referenced against invoices.
    */
   async listPayments(): Promise<RawPayment[]> {
     const res = await this.call<{ payments?: RawPayment[] }>("list_payments", [{}]);

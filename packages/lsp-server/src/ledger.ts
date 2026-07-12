@@ -3,12 +3,15 @@
  * payment ledger (`list_payments`) rather than an in-memory tally that a restart would lose.
  *
  * For an LSP this is the on-chain-truth complement to the JIT order store: every leg forward it paid to a
- * merchant, every keysend, with routing fees — grouped by asset and settlement status. It turns "the demo
- * works" into "here is the operator's P&L", and underpins per-merchant settlement reports.
+ * merchant, every keysend, with routing fees and settlement status.
  *
- * NOTE: `list_payments` field shapes are docs-derived and not yet verified live (see `RawPayment`); the
- * aggregation is tolerant of missing `amount`/`fee` (treated as zero) so a partial node response degrades
- * gracefully instead of throwing.
+ * CAVEAT (verified live, v0.9.0-rc5, testnet, 2026-07-12): FNN's `list_payments`/`get_payment` do not
+ * currently populate `amount` or `udt_type_script` on any observed record — only `payment_hash`, `status`,
+ * `fee`, and timestamps come back. So `succeeded`/`failed`/`inflight` counts and `fees` totals here are
+ * reliable; per-asset `sent` totals are NOT — they will read `0` against a live node today, and everything
+ * without a `udt_type_script` buckets under `"CKB"` regardless of its real asset. The aggregation degrades
+ * gracefully (missing fields treated as zero) rather than throwing, but callers should not present `sent` as
+ * a real P&L figure until this is cross-referenced against invoices or upstream starts returning it.
  */
 import { asBig, canonicalAssetId, udtAsset, CKB, type Asset } from "@fiberlsp/protocol";
 import type { FiberChannelRpcClient, RawPayment } from "@fiberlsp/fiber";
