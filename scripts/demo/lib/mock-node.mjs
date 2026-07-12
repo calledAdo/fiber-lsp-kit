@@ -61,27 +61,34 @@ export function makeNode(world, role, port) {
       }
       case "list_channels": return { channels: p0.pubkey ? channels.filter((c) => c.pubkey === p0.pubkey) : channels };
       case "abandon_channel": return {};
+      case "shutdown_channel": {
+        // Cooperative close: flip the channel to Closed (leaves the record so list_channels history holds).
+        const ch = channels.find((c) => c.channel_id === p0.channel_id || c.channel_outpoint === p0.channel_id);
+        if (ch) { ch.state = { state_name: "Closed" }; ch.enabled = false; }
+        return null;
+      }
       case "send_payment": {
         if (!p0.invoice && p0.target_pubkey) { // keysend (e.g. streaming rent): spontaneous pay to a pubkey
           if (p0.dry_run) return { status: "Success", fee: "0x0" };
           const ph = "0x" + createHash("sha256").update(`ks:${role}:${seq++}:${Date.now()}`).digest("hex");
-          payments.set(ph, { status: "Success", fee: "0x0" });
+          payments.set(ph, { payment_hash: ph, status: "Success", fee: "0x0", amount: p0.amount, udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: ph, status: "Success", fee: "0x0" };
         }
         const inv = world.invoices.get(p0.invoice);
         if (!inv) return { status: "Failed" };
         if (inv.preimage) { // a normal/leg invoice: the payer learns the preimage — settled now
           registry[inv.issuer].setStatus(inv.hash, "Paid");
-          payments.set(inv.hash, { status: "Success", payment_preimage: inv.preimage });
+          payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", payment_preimage: inv.preimage, amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: inv.hash, status: "Success" };
         }
         // a HOLD invoice: captured and HELD until the issuer settles it
         registry[inv.issuer].setStatus(inv.hash, "Received");
-        payments.set(inv.hash, { status: "Inflight" });
+        payments.set(inv.hash, { payment_hash: inv.hash, status: "Inflight", amount: "0x" + BigInt(inv.amount).toString(16) });
         world.held.set(inv.hash, { node: registry[role] });
         return { payment_hash: inv.hash, status: "Inflight" };
       }
       case "get_payment": return payments.get(p0.payment_hash) ?? { status: "Failed" };
+      case "list_payments": return { payments: [...payments.entries()].map(([h, v]) => ({ payment_hash: h, ...v })) };
       default: return null;
     }
   };

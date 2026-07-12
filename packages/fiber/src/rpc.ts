@@ -20,6 +20,13 @@ export type FetchLike = (url: string, init: RequestInit) => Promise<{ json(): Pr
 export interface RpcClientConfig {
   rpcUrl: string;
   fetchImpl?: FetchLike;
+  /**
+   * Optional bearer token sent as `Authorization: Bearer <token>` on every call. FNN supports Biscuit
+   * bearer-token auth and requires it when the RPC is bound publicly — a production LSP dialing a public
+   * node needs this. Omit for a local/trusted node. The mock node ignores it, so it's transport-only and
+   * doesn't disturb mock-vs-live indistinguishability.
+   */
+  authToken?: string;
 }
 
 /** A peer as returned by list_peers (verified live: each entry has `pubkey`, and `address` once known). */
@@ -121,6 +128,33 @@ export interface PaymentResult {
   payment_preimage?: string;
 }
 
+/**
+ * A payment as returned by `list_payments` — the node's durable payment ledger. Field shapes are
+ * **docs-derived** (Payment API), NOT yet verified live; probe against a testnet node before relying on
+ * amounts for accounting. Numeric fields follow CKB's 0x-hex convention; convert with `asBig`.
+ */
+export interface RawPayment {
+  payment_hash: string;
+  status: PaymentStatus;
+  /** Amount paid, hex base units of the payment asset. */
+  amount?: string;
+  /** Routing fee paid, hex shannons. */
+  fee?: string;
+  /** The channel asset this payment moved (omitted for CKB). */
+  udt_type_script?: UdtTypeScript | null;
+  /** Creation time, hex u64 ms since epoch. */
+  created_at?: string;
+  payment_preimage?: string;
+}
+
+export interface ShutdownChannelArgs {
+  channelId: string;
+  /** Force-close (unilateral) instead of a cooperative mutual close. Default cooperative (false). */
+  force?: boolean;
+  /** Fee rate for the closing tx, hex/decimal shannons-per-kB. Omit to let the node choose. */
+  feeRate?: string | bigint;
+}
+
 export interface SendPaymentArgs {
   /** Pay to this node pubkey directly — required for keysend (no invoice). */
   targetPubkey?: string;
@@ -141,18 +175,23 @@ export interface SendPaymentArgs {
 export class FiberChannelRpcClient {
   private readonly url: string;
   private readonly fetchImpl: FetchLike;
+  private readonly authHeader?: string;
   private id = 0;
 
   constructor(cfg: RpcClientConfig) {
     this.url = cfg.rpcUrl;
     this.fetchImpl = cfg.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+    this.authHeader = cfg.authToken ? `Bearer ${cfg.authToken}` : undefined;
   }
 
   async call<T>(method: string, params: unknown[]): Promise<T> {
     const payload = { jsonrpc: "2.0" as const, id: (this.id += 1), method, params };
     const res = await this.fetchImpl(this.url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(this.authHeader ? { authorization: this.authHeader } : {}),
+      },
       body: JSON.stringify(payload),
     });
     const { result, error } = (await res.json()) as { result?: T; error?: { message: string } };
@@ -268,6 +307,21 @@ export class FiberChannelRpcClient {
   }
 
   /**
+   * Cooperatively close a Ready channel and return its funds on-chain — the counterpart to `abandonChannel`
+   * (which only drops a never-Ready open). This is how an LSP reclaims capital from a lease the merchant
+   * stopped paying rent on, or how a merchant ends a lease it no longer wants. Either party may initiate.
+   *
+   * Shape is **docs-derived** (Channel API: `shutdown_channel { channel_id, force?, fee_rate? }`), NOT yet
+   * verified live — probe the real RPC before trusting the return/close semantics.
+   */
+  shutdownChannel(args: ShutdownChannelArgs): Promise<null> {
+    const params: Record<string, unknown> = { channel_id: args.channelId };
+    if (args.force !== undefined) params.force = args.force;
+    if (args.feeRate !== undefined) params.fee_rate = toHex(args.feeRate);
+    return this.call("shutdown_channel", [params]);
+  }
+
+  /**
    * Decode an invoice string without touching it. Used by the LSP to validate a merchant's JIT leg
    * invoice (hash and amount must match the order) before issuing the hold invoice.
    */
@@ -345,6 +399,18 @@ export class FiberChannelRpcClient {
   /** Look up a payment by its hash — poll this until `status` is `Success` or `Failed`. */
   getPayment(paymentHash: string): Promise<PaymentResult> {
     return this.call("get_payment", [{ payment_hash: paymentHash }]);
+  }
+
+  /**
+   * The node's durable payment ledger — every payment it has sent, across restarts. This is what lets an LSP
+   * reconcile fees earned and rent collected without keeping its own in-memory tally (see `LspLedger`).
+   *
+   * Shape is **docs-derived** (Payment API: `list_payments`), NOT yet verified live — probe before trusting
+   * amounts for accounting.
+   */
+  async listPayments(): Promise<RawPayment[]> {
+    const res = await this.call<{ payments?: RawPayment[] }>("list_payments", [{}]);
+    return res?.payments ?? [];
   }
 }
 

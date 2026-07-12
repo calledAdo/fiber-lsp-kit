@@ -28,3 +28,10 @@ export { MemoryJitStore, FileJitStore, type JitStore, type JitOrderRecord } from
 export { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
 export { selectLinkageVerifiers, type SelectLinkageVerifiersOptions } from "./linkageConfig.js";
 export { MemoryWatchStore, FileWatchStore, type WatchStore, type InvoiceWatch } from "./watchStore.js";
+export { closeLease, type CloseLeaseArgs, type CloseLeaseResult } from "./leaseClose.js";
+export {
+  LspLedger,
+  summarizePayments,
+  type LedgerSummary,
+  type AssetLedgerLine,
+} from "./ledger.js";

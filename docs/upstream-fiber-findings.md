@@ -179,6 +179,13 @@ expiry)`), and that `DEFAULT_HOLD_TLC_TIMEOUT` (120 s) bounds only **MPP partial
 invoices — it is *not* the hold window. As written, the constant's name reads as the hold ceiling and misleads
 integrators into under-sizing hold invoices.
 
+**Also tracking — a `cancel_invoice` state inconsistency (docs vs docs).** The hold-invoice *concept* page
+says a hold invoice may be cancelled in `Open`, `Received`, or `Expired`; the `cancel_invoice` *API* page
+says cancellation only applies in `Open`. Our refund path assumes cancel-after-`Received` works (finding 5
+observed it working live once the same hash isn't held+paid on one node). The two upstream pages disagree, so
+until it's reconciled, treat cancel-after-`Received` as *observed-working-but-unspecified* and don't rely on
+it across FNN versions without a live check.
+
 ---
 
 ## 7. (RFC sketch) HTLC interception + zero-conf channels ⇒ sub-second JIT
@@ -198,11 +205,13 @@ the payer's wallet.
 
 **Severity:** low (works, but forces polling loops in every integrator)
 
-**What happens.** FNN's RPC is strictly request/response. There is no way to *subscribe* to state changes —
-no "notify me when this invoice becomes `Received`/`Paid`", "when this channel reaches `ChannelReady`", or
-"when this payment settles/fails". So any process that reacts to those transitions (our `JitService`: hold
-detection, channel-ready detection, forward-settlement detection) must **poll** the relevant `get_invoice`
-/ `list_channels` / `get_payment` on an interval.
+**What happens.** FNN exposes no *first-class* event surface for the transitions integrators care about.
+There is a low-level `subscribe_store_changes` / `unsubscribe_store_changes` WebSocket stream (oriented at
+raw store changes and CCH integration), but no clean "notify me when this invoice becomes `Received`/`Paid`",
+"when this channel reaches `ChannelReady`", or "when this payment settles/fails" API. So any process that
+reacts to those transitions (our `JitService`: hold detection, channel-ready detection, forward-settlement
+detection) still must **poll** the relevant `get_invoice` / `list_channels` / `get_payment` on an interval —
+the store-change stream isn't a usable substitute for these.
 
 **Why it matters.** Polling is workable (parked `await`s, batchable into one shared watcher across orders),
 but it's needless RPC load and latency, and every integrator re-implements the same loops. An event stream

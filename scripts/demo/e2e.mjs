@@ -14,7 +14,7 @@ import {
 } from "../../packages/protocol/dist/index.js";
 import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { JitCheckout, LspClient, InvoiceService, StreamingLease } from "../../packages/client/dist/index.js";
-import { Lsp, JitService, createApi } from "../../packages/lsp-server/dist/index.js";
+import { Lsp, JitService, createApi, LspLedger, closeLease } from "../../packages/lsp-server/dist/index.js";
 import { loadConfig } from "./lib/config.mjs";
 import { createWorld, makeNode } from "./lib/mock-node.mjs";
 
@@ -124,5 +124,21 @@ assert.equal(lease.rent(), expectedRent.toString(10));
 for (let i = 0; i < 3; i++) { const r = await lease.payDue(); assert.equal(r.status, "paid"); }
 assert.equal(lease.periodsPaid, 3);
 ok(`rent streamed: 3 periods × ${cfg.fmt(lease.rent())} = ${cfg.fmt(lease.totalPaid)}`);
+
+// ── 4) LSP accounting + capital reclaim (A2 + A1) ──
+// The paying node is the LSP's own node under `linked`, or the separate pay node under `same_hash`.
+const ledger = await new LspLedger(payRpc ?? lspRpc).summary();
+assert.ok(ledger.succeeded >= 1, "the LSP node should have at least the forwarded leg on its ledger");
+assert.ok(ledger.by_asset.length >= 1);
+ok(`LSP ledger reconciles ${ledger.succeeded} sent payment(s) across ${ledger.by_asset.length} asset(s)`);
+
+// The lease is over: the LSP cooperatively closes the channel it opened toward the merchant and reclaims capital.
+const before = (await lspRpc.listChannels(merchantPubkey)).filter((c) => c.state?.state_name === "ChannelReady").length;
+assert.ok(before >= 1, "the JIT channel should be Ready before close");
+const closed = await closeLease({ rpc: lspRpc, merchantPubkey, asset: cfg.udt });
+assert.ok(closed.closed.length >= 1);
+const after = (await lspRpc.listChannels(merchantPubkey)).filter((c) => c.state?.state_name === "ChannelReady").length;
+assert.equal(after, before - closed.closed.length);
+ok(`lease closed: reclaimed ${closed.closed.length} channel(s), ${after} still Ready`);
 
 console.log("\nPASS ✅ — full demo flow in sync end to end.");
