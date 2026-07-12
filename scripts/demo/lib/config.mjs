@@ -52,7 +52,11 @@ export function loadConfig() {
   // (upstream finding #11). Undefined for a mock role or one with no `p2p` endpoint configured.
   cfg.peerAddr = (role, pubkey) => {
     const r = cfg.roles[role];
-    return !r.mock && r.p2p && pubkey ? `${r.p2p}/p2p/${nodePeerId(pubkey)}` : undefined;
+    if (!pubkey) return undefined;
+    // Live: the configured p2p listener. Mock: a synthetic multiaddr from the mock port — the mock LSP's
+    // connect_peer is a no-op, but the address is still supplied so the (now required) order field is present.
+    const base = r.p2p ?? (r.mock ? `/ip4/127.0.0.1/tcp/${new URL(r.fnn[0]).port}` : undefined);
+    return base ? `${base}/p2p/${nodePeerId(pubkey)}` : undefined;
   };
   cfg.artifactsAbs = Object.fromEntries(Object.entries(cfg.artifacts).map(([k, p]) => [k, resolve(repoRoot, p)]));
   return cfg;

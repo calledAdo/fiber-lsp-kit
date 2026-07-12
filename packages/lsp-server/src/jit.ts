@@ -170,6 +170,11 @@ export class JitService {
   }
 
   private async createOrderLocked(req: CreateJitOrderRequest): Promise<JitOrder> {
+    if (!req.target_address) {
+      // The LSP must open an outbound session to fund the channel; without a dialable address it cannot (see
+      // docs/upstream-fiber-findings.md #11). Reject early rather than fail deep in the open with a cryptic error.
+      throw new JitError("missing_target_address", "target_address is required: the LSP needs a multiaddr to dial the acceptor");
+    }
     const mode = this.resolveMode(req);
     const offering = this.offeringFor(req);
     const gross = asBig(req.amount);

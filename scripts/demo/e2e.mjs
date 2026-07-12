@@ -75,7 +75,8 @@ console.log(`E2E demo flow  (mode: ${expectMode})`);
 
 // ── 1) the JIT sale (request-invoice + pay) ──
 const merchantPubkey = (await merchantRpc.nodeInfo()).pubkey;
-const checkout = new JitCheckout({ rpc: merchantRpc, lsp: lspClient, merchantPubkey, mode: expectMode, proveLinkage });
+const merchantAddress = cfg.peerAddr("merchant", merchantPubkey);
+const checkout = new JitCheckout({ rpc: merchantRpc, lsp: lspClient, merchantPubkey, merchantAddress, mode: expectMode, proveLinkage });
 const session = await checkout.checkout({ asset: cfg.udt, amount: P.jitPayment, channelCapacity: P.jitCapacity, description: "sale #1" });
 assert.equal(session.mode, expectMode); ok(`JIT checkout negotiated ${session.mode}`);
 

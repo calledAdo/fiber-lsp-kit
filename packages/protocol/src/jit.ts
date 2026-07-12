@@ -40,8 +40,12 @@ export type JitOrderState =
 export interface CreateJitOrderRequest {
   /** The merchant node's pubkey (the JIT channel is opened toward it). */
   target_pubkey: string;
-  /** Multiaddr the LSP can `connect_peer` to. */
-  target_address?: string;
+  /**
+   * Multiaddr the LSP can `connect_peer` to. Required: the LSP funds the channel and so must open an OUTBOUND
+   * session to the acceptor — the one session FNN's inbound-no-channel protection won't evict mid-open (see
+   * docs/upstream-fiber-findings.md #11). Relying on an ambient inbound session is exactly what fails.
+   */
+  target_address: string;
   /** Channel asset (payment, fee and channel are all denominated in it). */
   asset: Asset;
   /** Which JIT construction to use. Must be one the LSP advertises in `JitTerms.modes`. Default `linked`. */

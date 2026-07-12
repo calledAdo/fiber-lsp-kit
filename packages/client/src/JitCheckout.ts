@@ -36,8 +36,8 @@ export interface JitCheckoutConfig {
   lsp: LspClient;
   /** The merchant node's pubkey; the JIT channel is opened toward it. */
   merchantPubkey: string;
-  /** Multiaddr the LSP can connect to. */
-  merchantAddress?: string;
+  /** Multiaddr the LSP can `connect_peer` to. Required — it becomes the order's `target_address` (see below). */
+  merchantAddress: string;
   randomBytes?: (n: number) => Uint8Array;
   sleep?: (ms: number) => Promise<void>;
   /**
