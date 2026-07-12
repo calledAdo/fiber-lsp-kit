@@ -21,10 +21,9 @@ export interface RpcClientConfig {
   rpcUrl: string;
   fetchImpl?: FetchLike;
   /**
-   * Optional bearer token sent as `Authorization: Bearer <token>` on every call. FNN supports Biscuit
-   * bearer-token auth and requires it when the RPC is bound publicly — a production LSP dialing a public
-   * node needs this. Omit for a local/trusted node. The mock node ignores it, so it's transport-only and
-   * doesn't disturb mock-vs-live indistinguishability.
+   * Optional bearer token sent as `Authorization: Bearer <token>` on every call. A production LSP dialing
+   * an authenticated public node needs this. Omit for a local/trusted node. The mock node ignores it, so
+   * it is transport-only and does not disturb mock-vs-live indistinguishability.
    */
   authToken?: string;
 }
@@ -133,6 +132,35 @@ export interface RawGraphChannel {
 export interface GraphChannelsPage {
   channels: RawGraphChannel[];
   last_cursor: string;
+}
+
+/** Invoice fields returned by FNN `parse_invoice`. */
+export interface ParsedInvoice {
+  invoice: {
+    /** Network marker (`Fibb` mainnet, `Fibt` testnet, `Fibd` devnet). Verified live on testnet. */
+    currency?: string;
+    amount?: string;
+    /** Recoverable secp256k1 signature, present on node-issued invoices. Verified live, v0.9.0-rc5. */
+    signature?: string;
+    data?: {
+      /** Invoice creation time, hex u128 milliseconds since epoch. Verified live. */
+      timestamp?: string;
+      payment_hash?: string;
+      /** Externally-tagged attrs, e.g. `{ "description": "..." }`. Verified live. */
+      attrs?: Array<Record<string, unknown>>;
+    };
+  };
+}
+
+export type InvoiceAttrName = "description" | "payee_public_key" | "expiry_time" | "udt_script";
+
+/** Return a string-valued parsed invoice attribute without exposing attr-array parsing to callers. */
+export function invoiceAttr(parsed: ParsedInvoice, name: InvoiceAttrName): string | undefined {
+  for (const attr of parsed.invoice.data?.attrs ?? []) {
+    const value = attr[name];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
 }
 
 export interface OpenChannelArgs {
@@ -392,18 +420,7 @@ export class FiberChannelRpcClient {
    * Decode an invoice string without touching it. Used by the LSP to validate a merchant's JIT leg
    * invoice (hash and amount must match the order) before issuing the hold invoice.
    */
-  parseInvoice(invoice: string): Promise<{
-    invoice: {
-      amount?: string;
-      data?: {
-        payment_hash?: string;
-        /** Invoice creation time, hex u128 **milliseconds** since epoch. */
-        timestamp?: string;
-        /** Externally-tagged attrs, e.g. `{ "expiry_time": "0xe10" }` (seconds), `{ "description": "…" }`. */
-        attrs?: Array<Record<string, unknown>>;
-      };
-    };
-  }> {
+  parseInvoice(invoice: string): Promise<ParsedInvoice> {
     return this.call("parse_invoice", [{ invoice }]);
   }
 

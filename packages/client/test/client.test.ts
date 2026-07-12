@@ -103,3 +103,40 @@ test("client surfaces LSP validation errors as LspApiError", async () => {
     (e: unknown) => e instanceof Error && e.name === "LspApiError",
   );
 });
+
+test("client authorization callback supplies the complete Authorization header", async () => {
+  const headers: Array<Record<string, string> | undefined> = [];
+  const client = new LspClient({
+    baseUrl: "http://lsp",
+    authorization: async () => "Bearer merchant-capability",
+    fetchImpl: async (_url, init) => {
+      headers.push(init?.headers);
+      return { status: 200, json: async () => ({ lsp_pubkey: "0xLSP" }) };
+    },
+  });
+
+  await client.getInfo();
+
+  assert.equal(headers[0]?.authorization, "Bearer merchant-capability");
+});
+
+test("an explicit JIT order token wins over the generic authorization callback", async () => {
+  let authorizationCalls = 0;
+  let headers: Record<string, string> | undefined;
+  const client = new LspClient({
+    baseUrl: "http://lsp",
+    authorization: () => {
+      authorizationCalls += 1;
+      return "Bearer merchant-capability";
+    },
+    fetchImpl: async (_url, init) => {
+      headers = init?.headers;
+      return { status: 200, json: async () => ({ jit_order_id: "jit_1" }) };
+    },
+  });
+
+  await client.getJitOrder("jit_1", "order-token");
+
+  assert.equal(headers?.authorization, "Bearer order-token");
+  assert.equal(authorizationCalls, 0);
+});

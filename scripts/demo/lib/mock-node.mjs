@@ -56,13 +56,37 @@ export function makeNode(world, role, port) {
         const preimage = p0.payment_preimage ?? ("0x" + createHash("sha256").update(`${role}:${seq}:${Date.now()}:${Math.random()}`).digest("hex"));
         const hash = p0.payment_hash ?? sha256(preimage);
         const addr = `fibt_${role}_${seq++}`;
-        world.invoices.set(addr, { hash, amount: BigInt(p0.amount).toString(), preimage: p0.payment_hash ? undefined : preimage, issuer: role });
+        const timestamp = "0x" + Date.now().toString(16);
+        const signature = createHash("sha256").update(`signature:${pubkey}:${hash}`).digest("hex");
+        world.invoices.set(addr, {
+          hash,
+          amount: BigInt(p0.amount).toString(),
+          preimage: p0.payment_hash ? undefined : preimage,
+          issuer: role,
+          pubkey,
+          currency: p0.currency ?? "Fibt",
+          description: p0.description,
+          expiry: p0.expiry,
+          timestamp,
+          signature,
+        });
         status.set(hash, "Open");
         return { invoice_address: addr, invoice: { amount: BigInt(p0.amount).toString(), data: { payment_hash: hash } } };
       }
       case "parse_invoice": {
         const inv = world.invoices.get(p0.invoice);
-        return inv ? { invoice: { amount: inv.amount, data: { payment_hash: inv.hash } } } : null;
+        if (!inv) return null;
+        const attrs = [{ payee_public_key: inv.pubkey }];
+        if (inv.description !== undefined) attrs.push({ description: inv.description });
+        if (inv.expiry !== undefined) attrs.push({ expiry_time: inv.expiry });
+        return {
+          invoice: {
+            currency: inv.currency,
+            amount: inv.amount,
+            signature: inv.signature,
+            data: { timestamp: inv.timestamp, payment_hash: inv.hash, attrs },
+          },
+        };
       }
       case "get_invoice": return { status: status.get(p0.payment_hash) ?? "Open" };
       case "settle_invoice": {

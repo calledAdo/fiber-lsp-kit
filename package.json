@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
+    "build": "tsc -b packages/protocol packages/fiber packages/auth packages/registry packages/lsp-server packages/client packages/prover-linked",
     "demo:lsp": "npm run build && node scripts/demo/servers/lsp.mjs",
     "demo:merchant": "npm run build && node scripts/demo/servers/merchant.mjs",
     "demo:customer": "npm run build && node scripts/demo/servers/customer.mjs",
@@ -21,7 +21,7 @@
     "demo:direct-pay": "node scripts/demo/actions/direct-pay.mjs",
     "demo:rent": "node scripts/demo/actions/stream-rent.mjs",
     "demo:e2e": "npm run build && node scripts/demo/e2e.mjs",
-    "typecheck": "tsc -b packages/protocol packages/fiber packages/registry packages/lsp-server packages/client packages/prover-linked",
+    "typecheck": "tsc -b packages/protocol packages/fiber packages/auth packages/registry packages/lsp-server packages/client packages/prover-linked",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",
     "server": "npm run build && npm -w @fiberlsp/server run start",

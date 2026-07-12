@@ -25,6 +25,8 @@ export type HttpFetch = (
 export interface LspClientConfig {
   baseUrl: string;
   fetchImpl?: HttpFetch;
+  /** Supplies a complete Authorization header for calls that do not carry an explicit per-order token. */
+  authorization?: () => string | Promise<string>;
 }
 
 export class LspApiError extends Error {
@@ -67,10 +69,12 @@ export interface WaitOpts {
 export class LspClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: HttpFetch;
+  private readonly authorization?: () => string | Promise<string>;
 
   constructor(cfg: LspClientConfig) {
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, "");
     this.fetchImpl = cfg.fetchImpl ?? (globalThis.fetch as unknown as HttpFetch);
+    this.authorization = cfg.authorization;
   }
 
   getInfo(): Promise<LspInfo> {
@@ -162,6 +166,7 @@ export class LspClient {
     const headers: Record<string, string> = {};
     if (body) headers["content-type"] = "application/json";
     if (token) headers.authorization = `Bearer ${token}`;
+    else if (this.authorization) headers.authorization = await this.authorization();
     const res = await this.fetchImpl(this.baseUrl + path, {
       method,
       headers,

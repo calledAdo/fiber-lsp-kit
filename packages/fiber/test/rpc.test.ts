@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CHANNEL_READY,
   FiberChannelRpcClient,
+  invoiceAttr,
   isChannelReady,
   type FetchLike,
   type GraphNodesPage,
@@ -317,20 +318,40 @@ test("sendPayment serializes keysend dry-run payments and fee caps", async () =>
 });
 
 test("peer, parse, and abandon wrappers call their FNN methods with typed parameters", async () => {
+  const parsedInvoice = {
+    invoice: {
+      currency: "Fibt",
+      amount: "0x64",
+      signature: "010203",
+      data: {
+        timestamp: "0x123",
+        payment_hash: "0xhash",
+        attrs: [
+          { description: "fiberlsp-auth:v1:testnet:nonce" },
+          { payee_public_key: "02aa" },
+          { expiry_time: "0x258" },
+          { udt_script: { code_hash: "not-a-string" } },
+        ],
+      },
+    },
+  };
   const { rpc, calls } = scriptedRpc([
     { jsonrpc: "2.0", id: 1, result: { peers: [{ pubkey: "0xpeer", address: "/ip4/127.0.0.1/tcp/8238" }] } },
     {
       jsonrpc: "2.0",
       id: 2,
-      result: { invoice: { amount: "0x64", data: { payment_hash: "0xhash" } } },
+      result: parsedInvoice,
     },
     { jsonrpc: "2.0", id: 3, result: null },
   ]);
 
   assert.deepEqual(await rpc.listPeers(), [{ pubkey: "0xpeer", address: "/ip4/127.0.0.1/tcp/8238" }]);
-  assert.deepEqual(await rpc.parseInvoice("fib:invoice"), {
-    invoice: { amount: "0x64", data: { payment_hash: "0xhash" } },
-  });
+  const parsed = await rpc.parseInvoice("fib:invoice");
+  assert.deepEqual(parsed, parsedInvoice);
+  assert.equal(invoiceAttr(parsed, "description"), "fiberlsp-auth:v1:testnet:nonce");
+  assert.equal(invoiceAttr(parsed, "payee_public_key"), "02aa");
+  assert.equal(invoiceAttr(parsed, "expiry_time"), "0x258");
+  assert.equal(invoiceAttr(parsed, "udt_script"), undefined);
   assert.equal(await rpc.abandonChannel("0xtemp"), null);
 
   assert.deepEqual(calls.map((c) => c.body), [
