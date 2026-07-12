@@ -187,6 +187,100 @@ test("graphNodesAll follows cursors and caps returned nodes", async () => {
   ]);
 });
 
+test("graphChannels serializes pagination and returns the live graph edge shape", async () => {
+  const graphChannel = {
+    channel_outpoint: "0xedge",
+    node1: "0xnode1",
+    node2: "0xnode2",
+    created_timestamp: "0x1",
+    update_info_of_node1: {
+      timestamp: "0x2",
+      enabled: true,
+      outbound_liquidity: null,
+      tlc_expiry_delta: "0x3",
+      tlc_minimum_value: "0x0",
+      fee_rate: "0x3e8",
+    },
+    update_info_of_node2: null,
+    capacity: "0x64",
+    chain_hash: "0xchain",
+    udt_type_script: udtTypeScript,
+  };
+  const { rpc, calls } = scriptedRpc([
+    { jsonrpc: "2.0", id: 1, result: { channels: [graphChannel], last_cursor: "0xcursor" } },
+  ]);
+
+  assert.deepEqual(await rpc.graphChannels({ limit: 5, after: "0xafter" }), {
+    channels: [graphChannel],
+    last_cursor: "0xcursor",
+  });
+  assert.deepEqual(calls[0].body, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "graph_channels",
+    params: [{ limit: "0x5", after: "0xafter" }],
+  });
+});
+
+test("routed payment wrappers serialize explicit hops and routed keysend dry-runs", async () => {
+  const router = [
+    {
+      target: "0xpeer",
+      channel_outpoint: "0xdonor",
+      amount_received: "0x65",
+      incoming_tlc_expiry: "0x20",
+    },
+    {
+      target: "0xself",
+      channel_outpoint: "0xstarved",
+      amount_received: "0x64",
+      incoming_tlc_expiry: "0x10",
+    },
+  ];
+  const { rpc, calls } = scriptedRpc([
+    { jsonrpc: "2.0", id: 1, result: { router_hops: router } },
+    { jsonrpc: "2.0", id: 2, result: { payment_hash: "0xpay", status: "Created", fee: "0x1" } },
+  ]);
+
+  const built = await rpc.buildRouter({
+    hops: [
+      { pubkey: "0xpeer", channelOutpoint: "0xdonor" },
+      { pubkey: "0xself", channelOutpoint: "0xstarved" },
+    ],
+    amount: 100n,
+    udtTypeScript,
+  });
+  assert.deepEqual(built, router);
+  await rpc.sendPaymentWithRouter({
+    router: built,
+    keysend: true,
+    udtTypeScript,
+    dryRun: true,
+  });
+
+  assert.deepEqual(calls.map((c) => c.body), [
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "build_router",
+      params: [{
+        hops_info: [
+          { pubkey: "0xpeer", channel_outpoint: "0xdonor" },
+          { pubkey: "0xself", channel_outpoint: "0xstarved" },
+        ],
+        amount: "0x64",
+        udt_type_script: udtTypeScript,
+      }],
+    },
+    {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "send_payment_with_router",
+      params: [{ router, keysend: true, udt_type_script: udtTypeScript, dry_run: true }],
+    },
+  ]);
+});
+
 test("sendPayment serializes keysend dry-run payments and fee caps", async () => {
   const { rpc, calls } = scriptedRpc([
     {

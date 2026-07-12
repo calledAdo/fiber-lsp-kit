@@ -28,6 +28,29 @@ export function makeNode(world, role, port) {
       case "list_peers": return { peers: Object.values(registry).filter((n) => n.role !== role).map((n) => ({ pubkey: n.pubkey })) };
       case "connect_peer": return {};
       case "graph_nodes": return { nodes: Object.values(registry).map((n) => ({ node_id: n.pubkey, addresses: [] })) };
+      case "graph_channels": {
+        const limit = p0.limit === undefined ? channels.length : Number(BigInt(p0.limit));
+        return {
+          channels: channels.slice(0, limit).map((ch) => ({
+            channel_outpoint: ch.channel_outpoint,
+            node1: pubkey,
+            node2: ch.pubkey,
+            created_timestamp: "0x1",
+            update_info_of_node1: {
+              timestamp: "0x1", enabled: ch.enabled, outbound_liquidity: ch.local_balance,
+              tlc_expiry_delta: "0xdbba00", tlc_minimum_value: "0x0", fee_rate: "0x0",
+            },
+            update_info_of_node2: {
+              timestamp: "0x1", enabled: ch.enabled, outbound_liquidity: ch.remote_balance,
+              tlc_expiry_delta: "0xdbba00", tlc_minimum_value: "0x0", fee_rate: "0x0",
+            },
+            capacity: "0x" + (BigInt(ch.local_balance) + BigInt(ch.remote_balance)).toString(16),
+            chain_hash: "0xmock",
+            udt_type_script: ch.funding_udt_type_script ?? null,
+          })),
+          last_cursor: "0x",
+        };
+      }
       case "new_invoice": {
         // A node-generated invoice (no hash/preimage supplied) gets a random preimage — so it settles directly.
         const preimage = p0.payment_preimage ?? ("0x" + createHash("sha256").update(`${role}:${seq}:${Date.now()}:${Math.random()}`).digest("hex"));
@@ -67,6 +90,38 @@ export function makeNode(world, role, port) {
         if (ch) { ch.state = { state_name: "Closed" }; ch.enabled = false; }
         return null;
       }
+      case "build_router": return {
+        router_hops: p0.hops_info.map((hop, index) => ({
+          target: hop.pubkey,
+          channel_outpoint: hop.channel_outpoint ?? `0xmock_route_${index}`,
+          amount_received: p0.amount,
+          incoming_tlc_expiry: "0x5265c00",
+        })),
+      };
+      case "send_payment_with_router": {
+        const ph = p0.payment_hash ?? ("0x" + createHash("sha256").update(`route:${role}:${seq++}:${Date.now()}`).digest("hex"));
+        if (p0.dry_run) return { payment_hash: ph, status: "Created", fee: "0x0" };
+
+        const first = p0.router[0];
+        const last = p0.router[p0.router.length - 1];
+        const donor = channels.find((ch) => ch.channel_outpoint === first.channel_outpoint);
+        const starved = channels.find((ch) => ch.channel_outpoint === last.channel_outpoint);
+        if (!donor || !starved) return { payment_hash: ph, status: "Failed", failed_error: "mock route channel not found" };
+
+        const amount = BigInt(last.amount_received);
+        donor.local_balance = "0x" + (BigInt(donor.local_balance) - amount).toString(16);
+        donor.remote_balance = "0x" + (BigInt(donor.remote_balance) + amount).toString(16);
+        starved.local_balance = "0x" + (BigInt(starved.local_balance) + amount).toString(16);
+        starved.remote_balance = "0x" + (BigInt(starved.remote_balance) - amount).toString(16);
+        payments.set(ph, {
+          payment_hash: ph,
+          status: "Success",
+          fee: "0x0",
+          amount: last.amount_received,
+          udt_type_script: p0.udt_type_script ?? null,
+        });
+        return { payment_hash: ph, status: "Success", fee: "0x0" };
+      }
       case "send_payment": {
         if (!p0.invoice && p0.target_pubkey) { // keysend (e.g. streaming rent): spontaneous pay to a pubkey
           if (p0.dry_run) return { status: "Success", fee: "0x0" };
@@ -92,7 +147,7 @@ export function makeNode(world, role, port) {
       default: return null;
     }
   };
-  const node = { role, port, pubkey, rpc, setStatus: (h, s) => status.set(h, s), payments };
+  const node = { role, port, pubkey, rpc, setStatus: (h, s) => status.set(h, s), payments, channels };
   registry[role] = node;
   return node;
 }

@@ -344,3 +344,31 @@ also needs to advertise a dialable multiaddr (`target_address` on the JIT order)
 dial. Verified live end-to-end on testnet: a merchant node with zero channels received a JIT-opened channel and
 a settled payment. This works around the symptom but doesn't fix the underlying eviction — the upstream ask
 above still stands.
+
+## 12. Circular rebalancing is expressible, but routed-payment RPC shapes differ from the docs summary
+
+**Context.** An LSP can recover local balance without an on-chain channel open by paying itself around a loop:
+leave through a donor channel, traverse the network, and return through the starved channel. We probed
+`graph_channels`, `build_router`, and `send_payment_with_router` against FNN v0.9.0-rc5 on testnet before
+building the operator primitive; no non-dry-run routed payment was submitted live.
+
+**Observed live shape.** `graph_channels` accepts `{ limit?: U64Hex, after?: cursor }` and returns
+`{ channels, last_cursor }`. Each edge exposes `node1`, `node2`, `capacity`, `udt_type_script`, and a directional
+update for each endpoint containing `enabled`, `outbound_liquidity`, TLC policy, and `fee_rate`.
+`build_router` accepts `hops_info: [{ pubkey, channel_outpoint? }]`, a top-level `amount`, and an optional
+`udt_type_script`; it returns `{ router_hops: [{ target, channel_outpoint, amount_received,
+incoming_tlc_expiry }] }`. Pinning the first and last channel outpoints successfully built a two-channel
+`self -> peer -> self` RUSD loop. The same loop using only pubkeys returned `no path found`.
+
+`send_payment_with_router` does **not** accept the enclosing build response as `router`: it accepts the
+`router_hops` array itself. UDT routes also need `udt_type_script`. Without `keysend`, `payment_hash` is required;
+with `keysend: true`, FNN generates the hash/preimage, which makes invoice-free circular self-payment possible.
+`dry_run: true` returned a priced `Created` payment and left both channel balances unchanged.
+
+**Effect.** Circular rebalancing is available in this node release, but callers must preserve explicit channel
+selection and pass the asset again at send time. Treating `router` as an opaque object, omitting the UDT script,
+or relying on ordinary shortest-path routing makes an otherwise valid loop fail.
+
+**Kit behavior.** `FiberChannelRpcClient` now pins these live shapes. `Rebalancer` is a standalone operational
+tool: it detects starved channels, selects a donor that remains above the configured floor, builds the explicit
+loop, and defaults to dry-run. It is intentionally not an automatic JIT or lease side effect.

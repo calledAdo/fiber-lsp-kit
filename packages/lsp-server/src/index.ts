@@ -35,3 +35,12 @@ export {
   type LedgerSummary,
   type AssetLedgerLine,
 } from "./ledger.js";
+export {
+  Rebalancer,
+  needsRebalance,
+  planCircularRebalance,
+  type RebalanceArgs,
+  type RebalanceResult,
+  type RebalanceThreshold,
+  type PlanCircularRebalanceArgs,
+} from "./rebalance.js";

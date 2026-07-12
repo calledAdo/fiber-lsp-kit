@@ -14,7 +14,7 @@ import {
 } from "../../packages/protocol/dist/index.js";
 import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
 import { JitCheckout, LspClient, InvoiceService, StreamingLease } from "../../packages/client/dist/index.js";
-import { Lsp, JitService, createApi, LspLedger, closeLease } from "../../packages/lsp-server/dist/index.js";
+import { Lsp, JitService, createApi, LspLedger, closeLease, Rebalancer } from "../../packages/lsp-server/dist/index.js";
 import { loadConfig } from "./lib/config.mjs";
 import { createWorld, makeNode } from "./lib/mock-node.mjs";
 
@@ -140,5 +140,43 @@ assert.ok(closed.closed.length >= 1);
 const after = (await lspRpc.listChannels(merchantPubkey)).filter((c) => c.state?.state_name === "ChannelReady").length;
 assert.equal(after, before - closed.closed.length);
 ok(`lease closed: reclaimed ${closed.closed.length} channel(s), ${after} still Ready`);
+
+// ── 5) standalone circular rebalance (B2) ──
+// Seed two parallel channels after the lease-close demonstration so the mock can exercise an observable
+// donor -> starved balance shift through the exact graph/build/send RPC path used with a live FNN node.
+const rebalanceAmount = 100_000_000n;
+const starvedChannel = {
+  channel_id: "0xrebalance_starved",
+  channel_outpoint: "0xrebalance_starved_out",
+  pubkey: merchantPubkey,
+  funding_udt_type_script: cfg.asset.script,
+  state: { state_name: "ChannelReady" },
+  local_balance: "0x" + (100_000_000n).toString(16),
+  remote_balance: "0x" + (900_000_000n).toString(16),
+  enabled: true,
+};
+const donorChannel = {
+  channel_id: "0xrebalance_donor",
+  channel_outpoint: "0xrebalance_donor_out",
+  pubkey: merchantPubkey,
+  funding_udt_type_script: cfg.asset.script,
+  state: { state_name: "ChannelReady" },
+  local_balance: "0x" + (900_000_000n).toString(16),
+  remote_balance: "0x" + (100_000_000n).toString(16),
+  enabled: true,
+};
+nodes.lsp.channels.push(starvedChannel, donorChannel);
+const starvedBefore = asBig(starvedChannel.local_balance);
+const donorBefore = asBig(donorChannel.local_balance);
+const rebalanced = await new Rebalancer(lspRpc).rebalance({
+  asset: cfg.udt,
+  minLocalBps: 2_000,
+  amount: rebalanceAmount,
+  dryRun: false,
+});
+assert.equal(rebalanced.status, "submitted");
+assert.equal(asBig(starvedChannel.local_balance), starvedBefore + rebalanceAmount);
+assert.equal(asBig(donorChannel.local_balance), donorBefore - rebalanceAmount);
+ok(`circular rebalance shifted ${cfg.fmt(rebalanceAmount)} from donor to starved channel`);
 
 console.log("\nPASS ✅ — full demo flow in sync end to end.");

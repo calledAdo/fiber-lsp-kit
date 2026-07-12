@@ -107,6 +107,34 @@ export interface GraphNodesPage {
   last_cursor: string;
 }
 
+/** Per-direction forwarding policy advertised on a gossip graph channel. */
+export interface RawGraphChannelUpdateInfo {
+  timestamp: string;
+  enabled: boolean;
+  outbound_liquidity: string | null;
+  tlc_expiry_delta: string;
+  tlc_minimum_value: string;
+  fee_rate: string;
+}
+
+/** A public channel edge returned by `graph_channels` on FNN v0.9.0-rc5. */
+export interface RawGraphChannel {
+  channel_outpoint: string;
+  node1: string;
+  node2: string;
+  created_timestamp: string;
+  update_info_of_node1: RawGraphChannelUpdateInfo | null;
+  update_info_of_node2: RawGraphChannelUpdateInfo | null;
+  capacity: string;
+  chain_hash: string;
+  udt_type_script: UdtTypeScript | null;
+}
+
+export interface GraphChannelsPage {
+  channels: RawGraphChannel[];
+  last_cursor: string;
+}
+
 export interface OpenChannelArgs {
   pubkey: string;
   /** LSP-funded amount = the client's inbound capacity, in the asset's base unit (decimal or bigint). */
@@ -174,6 +202,39 @@ export interface SendPaymentArgs {
   dryRun?: boolean;
   /** Cap the routing fee, hex/decimal/bigint shannons. */
   maxFeeAmount?: string | bigint;
+}
+
+/** A required waypoint for `build_router`; an outpoint pins that hop to one specific channel. */
+export interface BuildRouterHopRequirement {
+  pubkey: string;
+  channelOutpoint?: string;
+}
+
+export interface BuildRouterArgs {
+  hops: BuildRouterHopRequirement[];
+  amount: string | bigint;
+  udtTypeScript?: UdtTypeScript;
+}
+
+/** One fully-priced hop returned by `build_router` and accepted by `send_payment_with_router`. */
+export interface RawRouterHop {
+  target: string;
+  channel_outpoint: string;
+  amount_received: string;
+  incoming_tlc_expiry: string;
+}
+
+/** FNN accepts the `router_hops` array itself when sending, not the enclosing build response. */
+export type RawRouter = RawRouterHop[];
+
+export interface SendPaymentWithRouterArgs {
+  router: RawRouter;
+  paymentHash?: string;
+  /** Generate the preimage/hash inside FNN. Required for invoice-free circular self-payments. */
+  keysend?: boolean;
+  udtTypeScript?: UdtTypeScript;
+  /** Defaults false at the RPC boundary; operational callers should default this to true. */
+  dryRun?: boolean;
 }
 
 export class FiberChannelRpcClient {
@@ -366,6 +427,18 @@ export class FiberChannelRpcClient {
   }
 
   /**
+   * One page of public channel edges. **Verified live** on FNN v0.9.0-rc5 (testnet, 2026-07-12):
+   * pagination is `{ limit: U64Hex, after? }`; each edge exposes both endpoint pubkeys, capacity, asset,
+   * and each direction's enabled/fee/TLC policy. `outbound_liquidity` was present but null on sampled edges.
+   */
+  graphChannels(opts: { limit?: number; after?: string } = {}): Promise<GraphChannelsPage> {
+    const params: Record<string, unknown> = {};
+    if (opts.limit !== undefined) params.limit = toHex(opts.limit);
+    if (opts.after) params.after = opts.after;
+    return this.call("graph_channels", [params]);
+  }
+
+  /**
    * Page through the whole node graph. `pageSize` defaults to FNN's max (500); `maxNodes` caps the total
    * scanned so a large network can't run unbounded. Stops when a short page or an empty cursor is returned.
    */
@@ -400,6 +473,39 @@ export class FiberChannelRpcClient {
     if (args.dryRun) params.dry_run = true;
     if (args.maxFeeAmount !== undefined) params.max_fee_amount = toHex(args.maxFeeAmount);
     return this.call("send_payment", [params]);
+  }
+
+  /**
+   * Build and price a route through explicit waypoints. **Verified live** on FNN v0.9.0-rc5: `hops_info`
+   * accepts `{ pubkey, channel_outpoint? }`; pinning the first and final outpoints successfully built a
+   * two-channel `self -> peer -> self` RUSD loop. The node returns `{ router_hops: [...] }`.
+   */
+  async buildRouter(args: BuildRouterArgs): Promise<RawRouter> {
+    const params: Record<string, unknown> = {
+      hops_info: args.hops.map((hop) => ({
+        pubkey: hop.pubkey,
+        ...(hop.channelOutpoint ? { channel_outpoint: hop.channelOutpoint } : {}),
+      })),
+      amount: toHex(args.amount),
+    };
+    if (args.udtTypeScript) params.udt_type_script = args.udtTypeScript;
+    const result = await this.call<{ router_hops: RawRouter }>("build_router", [params]);
+    return result.router_hops;
+  }
+
+  /**
+   * Submit an already-built route. **Verified live** on FNN v0.9.0-rc5: `router` is the hop array itself;
+   * `dry_run` is a boolean and leaves balances unchanged; UDT routes require `udt_type_script`. Ordinary
+   * sends require `payment_hash`, while `keysend: true` generates one and is suitable for circular self-pay.
+   * Only dry-run behavior was exercised live; no real routed payment was submitted during verification.
+   */
+  sendPaymentWithRouter(args: SendPaymentWithRouterArgs): Promise<PaymentResult> {
+    const params: Record<string, unknown> = { router: args.router };
+    if (args.paymentHash) params.payment_hash = args.paymentHash;
+    if (args.keysend !== undefined) params.keysend = args.keysend;
+    if (args.udtTypeScript) params.udt_type_script = args.udtTypeScript;
+    if (args.dryRun) params.dry_run = true;
+    return this.call("send_payment_with_router", [params]);
   }
 
   /** Look up a payment by its hash — poll this until `status` is `Success` or `Failed`. */
