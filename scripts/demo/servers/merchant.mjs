@@ -60,13 +60,17 @@ async function startCheckout(body) {
   console.log(`[merchant] customer pays ${cfg.fmt(amount)}; merchant nets ${cfg.fmt(session.netAmount)} (fee ${cfg.fmt(session.fee)})`);
   // Persist the channel capacity so streaming rent follows the channel that was actually opened.
   const openedCapacity = session.order?.request?.channel_capacity ?? capacity;
-  saveState("jit-hold", { invoice: session.invoice, paymentHash: session.paymentHash, mode: session.mode, capacity: openedCapacity });
+  const checkoutState = { invoice: session.invoice, paymentHash: session.paymentHash, mode: session.mode, capacity: openedCapacity };
+  saveState("jit-hold", checkoutState);
 
   // Wait for settlement in the background; the control response returns the hold invoice immediately.
   session.settle({ attempts: 600, intervalMs: 1000 })
-    .then((o) => console.log(o.state === "settled"
-      ? `[merchant] ✅ SETTLED — channel ${o.channel_outpoint} opened; the first sale bought the channel`
-      : `[merchant] ⚠️ order ${o.state}`))
+    .then((o) => {
+      if (o.state === "settled" && o.channel_outpoint) saveState("jit-hold", { ...checkoutState, channelId: o.channel_outpoint });
+      console.log(o.state === "settled"
+        ? `[merchant] ✅ SETTLED — channel ${o.channel_outpoint} opened; the first sale bought the channel`
+        : `[merchant] ⚠️ order ${o.state}`);
+    })
     .catch((e) => console.log(`[merchant] settle error: ${e.message}`));
 
   return { invoice: session.invoice, mode: session.mode, netAmount: session.netAmount, fee: session.fee };
@@ -88,22 +92,24 @@ async function streamRent() {
   const info = await lsp.getInfo();
   const offering = (info.supported_assets ?? []).find((o) => o.stream); // the leased (streaming) offering
   if (!offering) throw new Error("the LSP advertises no streaming lease terms");
-  const capacity = loadState("jit-hold")?.capacity ?? cfg.amounts.jitCapacity;
+  const state = loadState("jit-hold");
+  if (!state?.channelId) throw new Error("the JIT channel has not settled yet");
+  const capacity = state.capacity ?? cfg.amounts.jitCapacity;
   const terms = leaseTermsFor(offering, capacity); // LSP's rate × this channel's capacity
   const lease = new StreamingLease({
     rpc: merchantRpc,
-    lspPubkey: info.lsp_pubkey,
+    channelId: state.channelId,
     terms,
     poll: { attempts: 5, intervalMs: 0, sleep: async () => {} },
     handlers: {
-      onPaid: (p) => console.log(`[merchant] rent period ${p.period}: paid ${cfg.fmt(p.amount)} (keysend ${p.payment_hash?.slice(0, 14)}…)`),
+      onPaid: (p) => console.log(`[merchant] rent period ${p.period}: ${cfg.fmt(p.remainingInbound)} remaining inbound → paid ${cfg.fmt(p.amount)}${p.payment_hash ? ` (keysend ${p.payment_hash.slice(0, 14)}…)` : ""}`),
       onSkip: (p) => console.log(`[merchant] rent period ${p.period}: skipped — ${p.reason}`),
     },
   });
   const periods = 3;
   for (let i = 0; i < periods; i++) await lease.payDue();
-  console.log(`[merchant] rent streamed: ${lease.periodsPaid} period(s) × ${cfg.fmt(lease.rent())} of ${cfg.fmt(capacity)} capacity, total ${cfg.fmt(lease.totalPaid)}`);
-  return { periodsPaid: lease.periodsPaid, totalPaid: lease.totalPaid.toString(), ratePerPeriod: lease.rent().toString(), capacity };
+  console.log(`[merchant] rent streamed: ${lease.periodsPaid} live-priced period(s), total ${cfg.fmt(lease.totalPaid)}`);
+  return { periodsPaid: lease.periodsPaid, totalPaid: lease.totalPaid.toString(), capacity };
 }
 
 const routes = {

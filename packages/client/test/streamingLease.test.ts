@@ -26,8 +26,8 @@ const terms = (over: Partial<LeaseTerms> = {}): LeaseTerms => ({
  * (dry-run or real) fails to build a route when the amount exceeds spendable. A real send moves the rent to
  * the LSP — modelling how paying rent back over the same channel restores the merchant's inbound.
  */
-function payer(spendable: bigint) {
-  const state = { spendable, sent: [] as { hash: string; amount: bigint }[] };
+function payer(spendable: bigint, remainingInbound = 1_000_000_000n, peerPubkey = LSP) {
+  const state = { spendable, remainingInbound, sent: [] as { hash: string; amount: bigint; target: string }[] };
   const fetchImpl = async (_url: string, i: { body?: string }) => {
     const { id, method, params } = JSON.parse(i.body ?? "{}");
     const p = params?.[0] ?? {};
@@ -41,10 +41,24 @@ function payer(spendable: bigint) {
         result = { payment_hash: "0xdry", status: "Created", fee: "0x0" };
       } else {
         const hash = "0xpay" + state.sent.length;
-        state.sent.push({ hash, amount });
+        state.sent.push({ hash, amount, target: p.target_pubkey });
         state.spendable -= amount; // rent leaves the merchant → toward the LSP (restores inbound)
+        state.remainingInbound += amount;
         result = { payment_hash: hash, status: "Created", fee: "0x0" }; // terminal via get_payment
       }
+    } else if (method === "list_channels") {
+      result = {
+        channels: [{
+          channel_id: "0xlease-channel",
+          channel_outpoint: "0xlease-outpoint",
+          pubkey: peerPubkey,
+          funding_udt_type_script: RUSD_SCRIPT,
+          state: { state_name: "ChannelReady" },
+          local_balance: "0x" + state.spendable.toString(16),
+          remote_balance: "0x" + state.remainingInbound.toString(16),
+          enabled: true,
+        }],
+      };
     } else if (method === "get_payment") {
       result = { payment_hash: p.payment_hash, status: "Success", fee: "0x0" };
     }
@@ -55,19 +69,21 @@ function payer(spendable: bigint) {
 
 const CLOCK = { now: () => 1_700_000_000 };
 const FAST = { poll: { attempts: 5, intervalMs: 0, sleep: async () => {} } };
+const CHANNEL = { channelId: "0xlease-outpoint" };
 
 test("rent() is the per-period rent in base units", () => {
-  const lease = new StreamingLease({ rpc: payer(0n).rpc, lspPubkey: LSP, terms: terms(), ...CLOCK, ...FAST });
+  const lease = new StreamingLease({ rpc: payer(0n).rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
   assert.equal(lease.rent(), "500000");
 });
 
 test("payDue settles rent by keysend when affordable", async () => {
   const n = payer(1_000_000n); // has revenue
   const paid: RentPayment[] = [];
-  const lease = new StreamingLease({ rpc: n.rpc, lspPubkey: LSP, terms: terms(), handlers: { onPaid: (p) => paid.push(p) }, ...CLOCK, ...FAST });
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), handlers: { onPaid: (p) => paid.push(p) }, ...CHANNEL, ...CLOCK, ...FAST });
   const p = await lease.payDue();
   assert.equal(p.status, "paid");
   assert.equal(p.amount, "500000");
+  assert.equal(p.remainingInbound, "1000000000");
   assert.ok(p.payment_hash?.startsWith("0xpay"));
   assert.equal(lease.periodsPaid, 1);
   assert.equal(lease.totalPaid, "500000");
@@ -79,7 +95,7 @@ test("payDue settles rent by keysend when affordable", async () => {
 
 test("payDue skips (no funds pre-revenue) and counts a miss", async () => {
   const skips: RentPayment[] = [];
-  const lease = new StreamingLease({ rpc: payer(0n).rpc, lspPubkey: LSP, terms: terms(), handlers: { onSkip: (p) => skips.push(p) }, ...CLOCK, ...FAST });
+  const lease = new StreamingLease({ rpc: payer(0n).rpc, terms: terms(), handlers: { onSkip: (p) => skips.push(p) }, ...CHANNEL, ...CLOCK, ...FAST });
   const p = await lease.payDue();
   assert.equal(p.status, "skipped");
   assert.match(p.reason ?? "", /insufficient balance/);
@@ -90,7 +106,7 @@ test("payDue skips (no funds pre-revenue) and counts a miss", async () => {
 
 test("rent resumes once revenue arrives (replenish-from-revenue)", async () => {
   const n = payer(0n);
-  const lease = new StreamingLease({ rpc: n.rpc, lspPubkey: LSP, terms: terms(), ...CLOCK, ...FAST });
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
   assert.equal((await lease.payDue()).status, "skipped"); // no sales yet
   n.state.spendable = 1_000_000n; // a customer paid the merchant
   const p = await lease.payDue();
@@ -103,8 +119,8 @@ test("consecutive misses beyond grace fire onLapse exactly once", async () => {
   const lapses: LapseInfo[] = [];
   const lease = new StreamingLease({
     rpc: payer(0n).rpc,
-    lspPubkey: LSP,
     terms: terms({ grace_periods: 1 }),
+    ...CHANNEL,
     handlers: { onLapse: (l) => lapses.push(l) },
     ...CLOCK,
     ...FAST,
@@ -121,7 +137,7 @@ test("consecutive misses beyond grace fire onLapse exactly once", async () => {
 
 test("start streams rent once per period until stopped", async () => {
   const n = payer(10_000_000n);
-  const lease = new StreamingLease({ rpc: n.rpc, lspPubkey: LSP, terms: terms(), ...CLOCK, ...FAST });
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
   let handle: { stop: () => void; done: Promise<void> };
   handle = lease.start({
     intervalMs: 0,
@@ -132,4 +148,58 @@ test("start streams rent once per period until stopped", async () => {
   await handle.done;
   assert.ok(lease.periodsPaid >= 3);
   assert.equal(lease.totalPaid, String(500000 * lease.periodsPaid));
+});
+
+test("payDue prices each period from the bound channel's live remaining inbound", async () => {
+  const n = payer(600_000_000n, 400_000_000n);
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
+
+  const first = await lease.payDue();
+  assert.equal(first.status, "paid");
+  assert.equal(first.remainingInbound, "400000000");
+  assert.equal(first.amount, "200000");
+
+  n.state.spendable += 200_000_000n;
+  n.state.remainingInbound -= 200_000_000n;
+  const second = await lease.payDue();
+  assert.equal(second.status, "paid");
+  assert.equal(second.remainingInbound, "200200000");
+  assert.equal(second.amount, "100100");
+});
+
+test("payDue does not use another channel when the bound channel is absent", async () => {
+  const n = payer(1_000_000n);
+  const lease = new StreamingLease({
+    rpc: n.rpc,
+    terms: terms(),
+    channelId: "0xanother-lease",
+    ...CLOCK,
+    ...FAST,
+  });
+
+  const result = await lease.payDue();
+  assert.equal(result.status, "skipped");
+  assert.match(result.reason ?? "", /bound lease channel.*not found/i);
+  assert.equal(n.state.sent.length, 0);
+});
+
+test("zero remaining inbound settles a zero-rent period without sending a payment", async () => {
+  const n = payer(1_000_000_000n, 0n);
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
+
+  const result = await lease.payDue();
+  assert.equal(result.status, "paid");
+  assert.equal(result.remainingInbound, "0");
+  assert.equal(result.amount, "0");
+  assert.equal(result.payment_hash, undefined);
+  assert.equal(n.state.sent.length, 0);
+});
+
+test("payDue derives the rent recipient from the bound channel peer", async () => {
+  const payingNode = "02" + "ab".repeat(32);
+  const n = payer(1_000_000n, 1_000_000_000n, payingNode);
+  const lease = new StreamingLease({ rpc: n.rpc, terms: terms(), ...CHANNEL, ...CLOCK, ...FAST });
+
+  assert.equal((await lease.payDue()).status, "paid");
+  assert.equal(n.state.sent[0].target, payingNode);
 });

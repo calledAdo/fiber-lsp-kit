@@ -83,6 +83,7 @@ export {
   type LapseInfo,
   type LeaseHandlers,
   type StreamingLeaseConfig,
+  type CurrentRent,
   type LeaseStartOptions,
   type LeaseHandle,
 } from "./StreamingLease.js";

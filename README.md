@@ -46,6 +46,13 @@ re-exported by `@fiberlsp/client` for compatibility.
 
 ## Try it
 
+Run the complete flow in one process first:
+
+```bash
+npm install
+npm run demo:e2e
+```
+
 **The demo — three roles, one JIT sale, no `fnn`, no faucet.** LSP, merchant, and customer are each a
 long-running process that logs what it sees. A merchant with **zero channels** takes a sale; where the proving
 key is present the merchant builds a **real Groth16 proof** the LSP verifies live. By default every role uses a
@@ -92,9 +99,9 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
   no binary, no native toolchain.
   Merchants prefer `same_hash` automatically when it is offered. See
   [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (JIT checkout).
-- **Leasing.** After activation, **streaming** rent is paid in the **channel's own asset** by keysend out of
-  revenue over the same channel (no second channel, no oracle). Rent aligns incentives: an LSP that closes early
-  forfeits future rent, and paying rent back **restores the merchant's inbound**.
+- **Leasing.** After activation, **streaming** rent is priced from the bound channel's **live remaining
+  inbound** and paid in that channel's own asset by keysend (no second channel, no oracle). Rent declines as
+  customer payments consume the LSP's liquidity; paying rent back restores some merchant inbound.
 - **Prepaid purchase (optional).** A merchant that wants inbound provisioned *ahead* of any customer can buy it
   with a CKB activation fee. Be aware it is pay-before-open: nothing atomically binds the fee to a channel
   actually being opened.

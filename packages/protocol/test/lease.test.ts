@@ -38,6 +38,10 @@ test("rentPerPeriod rounds up so the LSP never under-charges", () => {
   assert.equal(rentPerPeriod(terms({ capacity: "1", rate_bps_per_period: 1 })).toString(10), "1");
 });
 
+test("rentPerPeriod prices an explicitly supplied live remaining capacity", () => {
+  assert.equal(rentPerPeriod(terms(), "400000000").toString(10), "200000");
+});
+
 test("periodsElapsed floors and never goes negative", () => {
   assert.equal(periodsElapsed(1000, 1000 + 3 * 3600, 3600), 3);
   assert.equal(periodsElapsed(1000, 1000 + 3599, 3600), 0);

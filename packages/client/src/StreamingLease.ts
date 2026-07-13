@@ -22,16 +22,19 @@ import {
   type Asset,
   type LeaseTerms,
   asBig,
+  assetEquals,
   assetUdtScript,
   rentPerPeriod,
 } from "@fiberlsp/protocol";
-import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
+import { channelAsset, isChannelReady, type FiberChannelRpcClient } from "@fiberlsp/fiber";
 
 export interface RentPayment {
   /** 1-based index of this rent period within the lease's lifetime. */
   period: number;
   /** Rent owed for the period, in the asset's base unit. */
   amount: string;
+  /** Live remaining inbound capacity used as this period's rent base. */
+  remainingInbound?: string;
   asset: Asset;
   status: "paid" | "skipped";
   /** Set once a keysend is dispatched. */
@@ -64,8 +67,8 @@ export interface LeaseHandlers {
 export interface StreamingLeaseConfig {
   /** The merchant's own FNN node — the payer. */
   rpc: FiberChannelRpcClient;
-  /** The LSP's node pubkey (rent is keysent here). */
-  lspPubkey: string;
+  /** Exact leased `channel_id` or `channel_outpoint`; other channels are never included in this lease. */
+  channelId: string;
   terms: LeaseTerms;
   handlers?: LeaseHandlers;
   now?: () => number;
@@ -84,11 +87,22 @@ export interface LeaseHandle {
   done: Promise<void>;
 }
 
+export interface CurrentRent {
+  /** Canonical channel outpoint when available, otherwise its temporary/channel id. */
+  channelId: string;
+  /** Channel counterparty that receives rent, including a delegated paying node in a two-node JIT setup. */
+  peerPubkey: string;
+  /** Live remaining merchant inbound, capped at the capacity originally leased. */
+  remainingInbound: string;
+  /** Rent due now, in the channel asset's base unit. */
+  amount: string;
+}
+
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export class StreamingLease {
   private readonly rpc: FiberChannelRpcClient;
-  private readonly lspPubkey: string;
+  private readonly channelId: string;
   private readonly terms: LeaseTerms;
   private readonly handlers: LeaseHandlers;
   private readonly now: () => number;
@@ -103,7 +117,7 @@ export class StreamingLease {
 
   constructor(cfg: StreamingLeaseConfig) {
     this.rpc = cfg.rpc;
-    this.lspPubkey = cfg.lspPubkey;
+    this.channelId = cfg.channelId;
     this.terms = cfg.terms;
     this.handlers = cfg.handlers ?? {};
     this.now = cfg.now ?? (() => Math.floor(Date.now() / 1000));
@@ -114,9 +128,35 @@ export class StreamingLease {
     };
   }
 
-  /** Rent owed for one period, in the asset's base unit. */
+  /** Initial maximum rent quote. `payDue()` prices the live bound-channel balance instead. */
   rent(): string {
     return rentPerPeriod(this.terms).toString(10);
+  }
+
+  /** Read and price the exact leased channel without moving funds. */
+  async currentRent(): Promise<CurrentRent> {
+    const channels = await this.rpc.listChannels();
+    const channel = channels.find(
+      (candidate) =>
+        candidate.channel_id === this.channelId || candidate.channel_outpoint === this.channelId,
+    );
+    if (!channel) throw new Error(`bound lease channel ${this.channelId} not found`);
+    if (!isChannelReady(channel) || !channel.enabled) {
+      throw new Error(`bound lease channel ${this.channelId} is not ready and enabled`);
+    }
+    if (!assetEquals(channelAsset(channel), this.terms.asset)) {
+      throw new Error(`bound lease channel ${this.channelId} uses a different asset`);
+    }
+
+    const original = asBig(this.terms.capacity);
+    const live = asBig(channel.remote_balance);
+    const remaining = live < original ? live : original;
+    return {
+      channelId: channel.channel_outpoint ?? channel.channel_id,
+      peerPubkey: channel.pubkey,
+      remainingInbound: remaining.toString(10),
+      amount: rentPerPeriod(this.terms, remaining).toString(10),
+    };
   }
 
   get periodsPaid(): number {
@@ -144,14 +184,16 @@ export class StreamingLease {
    */
   async payDue(): Promise<RentPayment> {
     const period = ++this._period;
-    const amount = rentPerPeriod(this.terms);
     const asset = this.terms.asset;
     const udtTypeScript = assetUdtScript(asset);
     const at = this.now();
-    const base = { period, amount: amount.toString(10), asset } as const;
+    let amount = 0n;
+    let remainingInbound: string | undefined;
+    let rentRecipient: string | undefined;
+    const base = () => ({ period, amount: amount.toString(10), remainingInbound, asset } as const);
 
     const skip = (reason: string): RentPayment => {
-      const p: RentPayment = { ...base, status: "skipped", reason, at };
+      const p: RentPayment = { ...base(), status: "skipped", reason, at };
       this._consecutiveMisses += 1;
       this.handlers.onSkip?.(p);
       if (!this._lapsed && this._consecutiveMisses > this.terms.grace_periods) {
@@ -161,10 +203,32 @@ export class StreamingLease {
       return p;
     };
 
+    try {
+      const current = await this.currentRent();
+      amount = asBig(current.amount);
+      remainingInbound = current.remainingInbound;
+      rentRecipient = current.peerPubkey;
+    } catch (err) {
+      return skip(err instanceof Error ? err.message : "unable to read bound lease channel");
+    }
+
+    const recordPaid = (payment_hash?: string, fee?: string): RentPayment => {
+      this._paidCount += 1;
+      this._totalPaid += amount;
+      this._consecutiveMisses = 0;
+      this._lastPaidAt = at;
+      const paid: RentPayment = { ...base(), status: "paid", payment_hash, fee, at };
+      this.handlers.onPaid?.(paid);
+      return paid;
+    };
+
+    // No LSP-funded balance remains exposed, so this period is satisfied without a zero-value RPC payment.
+    if (amount === 0n) return recordPaid();
+
     // Pre-flight: build + price the route without moving funds. A fresh merchant with no revenue yet has no
     // spendable balance, so this cleanly defers rent until the first sale lands.
     try {
-      const dry = await this.rpc.sendPayment({ targetPubkey: this.lspPubkey, amount, keysend: true, udtTypeScript, dryRun: true });
+      const dry = await this.rpc.sendPayment({ targetPubkey: rentRecipient!, amount, keysend: true, udtTypeScript, dryRun: true });
       if (dry.status === "Failed") return skip(dry.failed_error || "route not payable (dry-run failed)");
     } catch (err) {
       return skip(err instanceof Error ? err.message : "dry-run rejected");
@@ -174,7 +238,7 @@ export class StreamingLease {
     let hash: string;
     let fee: string | undefined;
     try {
-      const sent = await this.rpc.sendPayment({ targetPubkey: this.lspPubkey, amount, keysend: true, udtTypeScript, dryRun: false });
+      const sent = await this.rpc.sendPayment({ targetPubkey: rentRecipient!, amount, keysend: true, udtTypeScript, dryRun: false });
       hash = sent.payment_hash;
       fee = sent.fee;
       for (let i = 0; i < this.poll.attempts; i++) {
@@ -192,13 +256,7 @@ export class StreamingLease {
       return skip(err instanceof Error ? err.message : "send rejected");
     }
 
-    this._paidCount += 1;
-    this._totalPaid += amount;
-    this._consecutiveMisses = 0;
-    this._lastPaidAt = at;
-    const paid: RentPayment = { ...base, status: "paid", payment_hash: hash, fee, at };
-    this.handlers.onPaid?.(paid);
-    return paid;
+    return recordPaid(hash, fee);
   }
 
   /** Pay rent once per period until `stop()`. Errors are routed to `onError`, never thrown out of the loop. */

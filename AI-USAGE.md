@@ -36,7 +36,8 @@ Several of these are written up as upstream reports in
 ## Testing regime
 
 - The offline suite runs through the **real** RPC code path (a scripted transport, not stubbed logic).
-- `npm run demo` exercises the whole merchant flow node-lessly (real kit code + a real webhook sink).
+- `npm run demo:e2e` exercises the JIT, direct-payment, live-capacity rent, accounting, close, and rebalance
+  flow node-lessly through the real package APIs.
 - `npm run test:live` re-checks the real RPC surface against a running node.
 - The JIT sale flow (LSP/merchant/customer) is reproducible via `scripts/demo/`, over mock nodes or live.
 - JIT behaviour (hold, settle, refund, hold-window semantics) was spiked live against a node before the kit

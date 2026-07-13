@@ -10,9 +10,9 @@
  * pre-pays for uptime it might not get, (2) an LSP that closes early forfeits future rent, and (3) each
  * period is settled by a normal atomic Fiber payment — trust is bounded to a single period.
  *
- * Rent is priced as basis points of the leased capacity per period, keeping the LSP oracle-free (it earns
- * in the asset it lent). Time enters via `period_seconds`; the LSP's yield is `rate_bps_per_period` per
- * period, i.e. a rate per (capacity × time) — the correct economic shape for locked liquidity.
+ * Rent is priced as basis points of the live remaining leased capacity per period, keeping the LSP
+ * oracle-free (it earns in the asset it lent). Time enters via `period_seconds`; the LSP's yield is
+ * `rate_bps_per_period` per period, i.e. a rate per (capacity × time).
  */
 import type { Asset, AssetOffering, StreamTerms } from "./types.js";
 import { asBig } from "./num.js";
@@ -23,16 +23,17 @@ import { computeFee } from "./fee.js";
 export interface LeaseTerms extends StreamTerms {
   /** The channel asset the rent is denominated and paid in (the same channel — never a new one). */
   asset: Asset;
-  /** Inbound capacity leased, in the asset's base unit. The rent base. */
+  /** Original inbound capacity leased, in the asset's base unit. The upper bound for the live rent base. */
   capacity: string;
 }
 
 /**
  * Rent owed for a single period: `ceil(rate_bps_per_period · capacity / 10_000)`, in the asset's base unit.
+ * Pass the channel's live remaining inbound when collecting rent; omit it when quoting the initial maximum.
  * Ceil so the LSP never under-charges by a rounding unit (matches the fee model's convention).
  */
-export function rentPerPeriod(terms: LeaseTerms): bigint {
-  const cap = asBig(terms.capacity);
+export function rentPerPeriod(terms: LeaseTerms, capacity: string | bigint = terms.capacity): bigint {
+  const cap = asBig(capacity);
   const bps = BigInt(Math.trunc(terms.rate_bps_per_period));
   return (cap * bps + 9_999n) / 10_000n;
 }

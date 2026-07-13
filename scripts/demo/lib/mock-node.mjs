@@ -7,6 +7,26 @@ import { createHash } from "node:crypto";
 
 const sha256 = (hex) => "0x" + createHash("sha256").update(Buffer.from(hex.slice(2), "hex")).digest("hex");
 export const pubkeyFor = (port) => "02" + createHash("sha256").update(`node:${port}`).digest("hex").slice(0, 62);
+const sameScript = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+function moveAcrossChannel(world, receiver, invoice) {
+  const amount = BigInt(invoice.amount);
+  const channel = receiver.channels.find((candidate) =>
+    candidate.enabled &&
+    candidate.state.state_name === "ChannelReady" &&
+    sameScript(candidate.funding_udt_type_script, invoice.udt_type_script) &&
+    BigInt(candidate.remote_balance) >= amount);
+  if (!channel) return;
+
+  channel.local_balance = "0x" + (BigInt(channel.local_balance) + amount).toString(16);
+  channel.remote_balance = "0x" + (BigInt(channel.remote_balance) - amount).toString(16);
+  const peer = Object.values(world.registry).find((candidate) => candidate.pubkey === channel.pubkey);
+  const mirror = peer?.channels.find((candidate) => candidate.channel_outpoint === channel.channel_outpoint);
+  if (mirror) {
+    mirror.local_balance = "0x" + (BigInt(mirror.local_balance) - amount).toString(16);
+    mirror.remote_balance = "0x" + (BigInt(mirror.remote_balance) + amount).toString(16);
+  }
+}
 
 /** A shared "network" all nodes are backed by. One per demo run / test. */
 export function createWorld() {
@@ -66,6 +86,7 @@ export function makeNode(world, role, port) {
           pubkey,
           currency: p0.currency ?? "Fibt",
           description: p0.description,
+          udt_type_script: p0.udt_type_script ?? null,
           expiry: p0.expiry,
           timestamp,
           signature,
@@ -102,8 +123,13 @@ export function makeNode(world, role, port) {
         return {};
       }
       case "open_channel": {
-        channels.push({ channel_id: `0xch_${role}_${seq}`, pubkey: p0.pubkey, funding_udt_type_script: p0.funding_udt_type_script ?? null,
-          state: { state_name: "ChannelReady" }, channel_outpoint: `0xoutpoint_${role}_${seq}`, local_balance: p0.funding_amount, remote_balance: "0x0", enabled: true });
+        const channelId = `0xch_${role}_${seq}`;
+        const channelOutpoint = `0xoutpoint_${role}_${seq}`;
+        const common = { channel_id: channelId, funding_udt_type_script: p0.funding_udt_type_script ?? null,
+          state: { state_name: "ChannelReady" }, channel_outpoint: channelOutpoint, enabled: true };
+        channels.push({ ...common, pubkey: p0.pubkey, local_balance: p0.funding_amount, remote_balance: "0x0" });
+        const peer = Object.values(registry).find((candidate) => candidate.pubkey === p0.pubkey);
+        if (peer) peer.channels.push({ ...common, state: { ...common.state }, pubkey, local_balance: "0x0", remote_balance: p0.funding_amount });
         return { temporary_channel_id: `0xtmp_${seq++}` };
       }
       case "list_channels": return { channels: p0.pubkey ? channels.filter((c) => c.pubkey === p0.pubkey) : channels };
@@ -148,7 +174,23 @@ export function makeNode(world, role, port) {
       }
       case "send_payment": {
         if (!p0.invoice && p0.target_pubkey) { // keysend (e.g. streaming rent): spontaneous pay to a pubkey
+          const amount = BigInt(p0.amount);
+          const direct = channels.find((candidate) =>
+            candidate.pubkey === p0.target_pubkey &&
+            candidate.enabled &&
+            candidate.state.state_name === "ChannelReady" &&
+            sameScript(candidate.funding_udt_type_script, p0.udt_type_script) &&
+            BigInt(candidate.local_balance) >= amount);
+          if (!direct) return { status: "Failed", failed_error: "mock direct channel has insufficient balance" };
           if (p0.dry_run) return { status: "Success", fee: "0x0" };
+          direct.local_balance = "0x" + (BigInt(direct.local_balance) - amount).toString(16);
+          direct.remote_balance = "0x" + (BigInt(direct.remote_balance) + amount).toString(16);
+          const peer = Object.values(registry).find((candidate) => candidate.pubkey === p0.target_pubkey);
+          const mirror = peer?.channels.find((candidate) => candidate.channel_outpoint === direct.channel_outpoint);
+          if (mirror) {
+            mirror.local_balance = "0x" + (BigInt(mirror.local_balance) + amount).toString(16);
+            mirror.remote_balance = "0x" + (BigInt(mirror.remote_balance) - amount).toString(16);
+          }
           const ph = "0x" + createHash("sha256").update(`ks:${role}:${seq++}:${Date.now()}`).digest("hex");
           payments.set(ph, { payment_hash: ph, status: "Success", fee: "0x0", amount: p0.amount, udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: ph, status: "Success", fee: "0x0" };
@@ -156,7 +198,9 @@ export function makeNode(world, role, port) {
         const inv = world.invoices.get(p0.invoice);
         if (!inv) return { status: "Failed" };
         if (inv.preimage) { // a regular merchant invoice: the payer learns the preimage — settled now
-          registry[inv.issuer].setStatus(inv.hash, "Paid");
+          const issuer = registry[inv.issuer];
+          moveAcrossChannel(world, issuer, inv);
+          issuer.setStatus(inv.hash, "Paid");
           payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", payment_preimage: inv.preimage, amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: inv.hash, status: "Success" };
         }

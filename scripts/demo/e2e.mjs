@@ -102,6 +102,14 @@ const held = await customerRpc.getPayment(session.paymentHash);
 assert.equal(held.status, "Success");
 ok(`customer hold payment released → Success`);
 
+const lease = new StreamingLease({
+  rpc: merchantRpc,
+  channelId: settled.channel_outpoint,
+  terms: { asset: cfg.udt, capacity: P.jitCapacity, rate_bps_per_period: 5, period_seconds: 86400, grace_periods: 2 },
+  poll: { attempts: 3, intervalMs: 0, sleep: async () => {} }, handlers: {},
+});
+const rentAfterJit = await lease.currentRent();
+
 // ── 2) a direct sale over the now-open channel ──
 const issued = await new InvoiceService({ rpc: merchantRpc }).issue({ asset: cfg.udt, amount: P.jitPayment, description: "sale #2" });
 const parsedDirect = await customerRpc.parseInvoice(issued.invoice);
@@ -112,18 +120,20 @@ assert.equal(directPay.status, "Success");
 const directSettled = await customerRpc.getPayment(directPay.payment_hash);
 assert.equal(directSettled.status, "Success"); assert.ok(directSettled.payment_preimage);
 ok(`direct invoice paid over the open channel (${cfg.fmt(P.jitPayment)}, preimage via get_payment)`);
+const rentAfterDirect = await lease.currentRent();
+assert.ok(asBig(rentAfterDirect.remainingInbound) < asBig(rentAfterJit.remainingInbound));
+assert.ok(asBig(rentAfterDirect.amount) < asBig(rentAfterJit.amount));
+ok(`live rent base fell from ${cfg.fmt(rentAfterJit.remainingInbound)} to ${cfg.fmt(rentAfterDirect.remainingInbound)} after the repeat sale`);
 
 // ── 3) streaming rent ──
-const lease = new StreamingLease({
-  rpc: merchantRpc, lspPubkey: nodes.lsp.pubkey,
-  terms: { asset: cfg.udt, capacity: P.jitCapacity, rate_bps_per_period: 5, period_seconds: 86400, grace_periods: 2 },
-  poll: { attempts: 3, intervalMs: 0, sleep: async () => {} }, handlers: {},
-});
-const expectedRent = (asBig(P.jitCapacity) * 5n) / 10000n;
-assert.equal(lease.rent(), expectedRent.toString(10));
-for (let i = 0; i < 3; i++) { const r = await lease.payDue(); assert.equal(r.status, "paid"); }
+const rentPayments = [];
+for (let i = 0; i < 3; i++) {
+  const rent = await lease.payDue();
+  assert.equal(rent.status, "paid");
+  rentPayments.push(rent);
+}
 assert.equal(lease.periodsPaid, 3);
-ok(`rent streamed: 3 periods × ${cfg.fmt(lease.rent())} = ${cfg.fmt(lease.totalPaid)}`);
+ok(`rent streamed from live channel capacity: ${rentPayments.map((p) => cfg.fmt(p.amount)).join(" + ")} = ${cfg.fmt(lease.totalPaid)}`);
 
 // ── 4) LSP accounting + capital reclaim (A2 + A1) ──
 // The paying node is the LSP's own node under `linked`, or the separate pay node under `same_hash`.

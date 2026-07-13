@@ -12,4 +12,4 @@ const res = await fetch(url, { method: "POST" }).catch((e) => { console.error(`c
 const out = await res.json();
 if (!res.ok) { console.error(`merchant refused: ${out.error}`); process.exit(1); }
 
-console.log(`rent streamed: ${out.periodsPaid} period(s) at ${cfg.fmt(out.ratePerPeriod)}/period, total ${cfg.fmt(out.totalPaid)}`);
+console.log(`rent streamed: ${out.periodsPaid} live-priced period(s), total ${cfg.fmt(out.totalPaid)}`);
