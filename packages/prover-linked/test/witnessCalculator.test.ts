@@ -28,12 +28,12 @@ const haveCircuit = existsSync(WASM);
 
 test("linkageWitnessInput derives the circuit's public signals from the secret", () => {
   const input = linkageWitnessInput(SECRET);
-  const { hold, leg } = dualSha256(SECRET);
+  const { hold, merchantPaymentHash } = dualSha256(SECRET);
   assert.equal(input.secret.length, 32);
   assert.equal(BigInt(input.hold_hi), BigInt("0x" + hold.slice(2, 34)));
   assert.equal(BigInt(input.hold_lo), BigInt("0x" + hold.slice(34)));
-  assert.equal(BigInt(input.leg_hi), BigInt("0x" + leg.slice(2, 34)));
-  assert.equal(BigInt(input.leg_lo), BigInt("0x" + leg.slice(34)));
+  assert.equal(BigInt(input.merchant_hash_hi), BigInt("0x" + merchantPaymentHash.slice(2, 34)));
+  assert.equal(BigInt(input.merchant_hash_lo), BigInt("0x" + merchantPaymentHash.slice(34)));
 });
 
 test("linkageWitnessInput rejects a secret that is not 32 bytes", () => {

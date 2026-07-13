@@ -4,7 +4,7 @@
 
 Under `linked` JIT the LSP verifies a Groth16 proof before it opens a channel and pays a merchant. That proof is
 the only thing standing between the LSP and a merchant who supplies two *unlinked* hashes: if the proof can be
-forged, the LSP pays the merchant leg and then cannot settle the customer hold. It is a direct loss.
+forged, the LSP pays the merchant invoice and then cannot settle the customer hold. It is a direct loss.
 
 Groth16's keys are derived from secret randomness. **Whoever retains that secret can forge a proof for a false
 statement, and the forgery verifies against the honest key.** So the key's provenance *is* the LSP's security,
@@ -14,7 +14,7 @@ Note who is protected. A backdoored key lets a **merchant steal from the LSP**. 
 assumption, not the merchant's.
 
 > **You may not need any of this.** The proof exists only because a single FNN node cannot hold and pay the same
-> payment hash. An LSP that runs **two** nodes serves `same_hash` instead: one hash on both legs, no proof, no
+> payment hash. An LSP that runs **two** nodes serves `same_hash` instead: one hash on both invoices, no proof, no
 > proving key, no setup, and nothing to trust. See
 > [`ARCHITECTURE.md` § The hash-lock collision](./ARCHITECTURE.md#the-hash-lock-collision). Everything below
 > applies to `linked` only.

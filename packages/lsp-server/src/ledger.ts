@@ -2,8 +2,8 @@
  * LspLedger — reconciliation of what the LSP node has actually paid out, from the node's own durable
  * payment ledger (`list_payments`) rather than an in-memory tally that a restart would lose.
  *
- * For an LSP this is the on-chain-truth complement to the JIT order store: every leg forward it paid to a
- * merchant, every keysend, with routing fees and settlement status.
+ * For an LSP this is the on-chain-truth complement to the JIT order store: every merchant-invoice payment and
+ * every keysend, with routing fees and settlement status.
  *
  * CAVEAT (verified live, v0.9.0-rc5, testnet, 2026-07-12): FNN's `list_payments`/`get_payment` do not
  * currently populate `amount` or `udt_type_script` on any observed record — only `payment_hash`, `status`,

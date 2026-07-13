@@ -337,7 +337,8 @@ export class FiberChannelRpcClient {
   }
 
   /**
-   * Create an invoice (used for the prepaid fee and the JIT legs). `amount` in base unit; UDT optional.
+   * Create an invoice (used for prepaid fees and regular JIT merchant invoices). `amount` is in the asset's
+   * base unit; UDT metadata is optional.
    *
    * Exactly one of `paymentPreimage` / `paymentHash` may be set (FNN: "if hash is set, preimage must be
    * absent"). Passing only `paymentHash` creates a **hold invoice**: the node accepts and HOLDS the
@@ -417,7 +418,7 @@ export class FiberChannelRpcClient {
   }
 
   /**
-   * Decode an invoice string without touching it. Used by the LSP to validate a merchant's JIT leg
+   * Decode an invoice string without touching it. Used by the LSP to validate a merchant's JIT
    * invoice (hash and amount must match the order) before issuing the hold invoice.
    */
   parseInvoice(invoice: string): Promise<ParsedInvoice> {

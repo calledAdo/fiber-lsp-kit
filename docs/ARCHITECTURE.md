@@ -175,7 +175,7 @@ rather than a monolith.
 
 **Capital discipline is structural.** Since JIT moves all residual trust onto the LSP, the LSP's own exposure
 must be bounded by construction rather than by care. It can lose money in exactly one way — pay the merchant
-leg, then fail to settle the customer hold — so the engine never opens before the hold is funded, never forwards
+invoice, then fail to settle the customer hold — so the engine never opens before the hold is funded, never forwards
 when too little hold lifetime remains, reads the on-chain TLC expiry rather than guessing it, and re-drives
 in-flight orders on restart. Because FNN exposes no push or subscription for invoice, channel, or payment state,
 every transition is discovered by polling.
@@ -221,7 +221,7 @@ dual-funds CKB and pays in-channel once ready).
 **Lifecycles.**
 
 ```text
-JIT:      created ─customer pays hold─▶ payment_held ─▶ opening ─leg paid─▶ forwarding ─settle─▶ settled
+JIT:      created ─customer pays hold─▶ payment_held ─▶ opening ─merchant invoice paid─▶ forwarding ─settle─▶ settled
                   └─not paid by expiry ───────────────────────────────────────────────────────▶ expired
                   └─open/forward failure or cancel ─────────────────────────────────────────────▶ refunded
 
@@ -239,7 +239,7 @@ The merchant generates a 32-byte secret `S` and never shares it. Everything else
 ```text
    customer                    LSP                          merchant
       │                         │                              │
-      │                         │◀───── 1. create order ───────│   hold_hash, leg invoice,
+      │                         │◀───── 1. create order ───────│   hold_hash, merchant invoice,
       │                         │        (+ linkage proof)     │   amount, target pubkey
       │                         │
       │                         │   verify EVERYTHING here — before any capital moves
@@ -252,7 +252,7 @@ The merchant generates a 32-byte secret `S` and never shares it. Everything else
       │                         │
       │                         │────── 4. open_channel ──────▶│   on-chain. minutes.
       │                         │                              │
-      │                         │──── 5. pay leg (net fee) ───▶│   merchant claims,
+      │                         │─ 5. pay merchant invoice ───▶│   merchant claims,
       │                         │◀──────── preimage S ─────────│   revealing S
       │                         │
       │                         │   6. settle the hold with S. The LSP keeps the gross.
@@ -269,8 +269,8 @@ This is what the rest of the document is defending.
 
 ## The hash-lock collision
 
-Step 5 above hides a problem. The hold invoice and the leg invoice are both hash-locks. The obvious design gives
-them the **same** hash `H = sha256(S)`: the merchant claims the leg with `S`, the LSP settles the hold with `S`.
+Step 5 above hides a problem. The hold invoice and the merchant invoice are both hash-locks. The obvious design gives
+them the **same** hash `H = sha256(S)`: the merchant claims its invoice with `S`, and the LSP settles the hold with `S`.
 
 **A single FNN node cannot do this.** Verified live against FNN v0.9.0-rc5: one node that holds `invoice(H)` and
 then sends `payment(H)` has its `send_payment` *accepted*. The payment reaches `Success`. Its own hold invoice
@@ -279,7 +279,7 @@ held payment ends `Failed / HoldTlcTimeout`. Net result: the merchant is paid, t
 **the LSP loses the amount — with no error raised at any call site.** Written up as
 [finding #5](./upstream-fiber-findings.md).
 
-So the two legs must not collide on one node. There are exactly two ways out, and an LSP advertises which it
+So the two invoice payments must not collide on one node. There are exactly two ways out, and an LSP advertises which it
 serves in `LspInfo.jit.modes`; the merchant chooses per order with `CreateJitOrderRequest.mode`.
 
 ```text
@@ -287,14 +287,14 @@ serves in `LspInfo.jit.modes`; the merchant chooses per order with `CreateJitOrd
 
    customer          merchant               customer                       merchant
       │                 ▲                      │                              ▲
-      │ hold: A         │ leg: B               │ hold: H                      │ leg: H
+      │ hold: A         │ merchant: B          │ hold: H                      │ merchant: H
       ▼                 │                      ▼                              │
    ┌────────────────────┴───┐              ┌───────────┐               ┌──────┴──────┐
    │       LSP node         │              │ hold node │◀── S ─────────│  pay node   │
    │  holds A,  pays B      │              │  holds H  │   (internal)  │   pays H    │
    └────────────────────────┘              └───────────┘               └─────────────┘
 
-   A = sha256(poseidon(S))                 H = sha256(S) on both legs
+   A = sha256(poseidon(S))                 H = sha256(S) on both invoices
    B = sha256(S)                           no collision: different nodes
    A ≠ B, so no collision on one node.     nothing to prove — there is one hash.
    Merchant PROVES A and B share one S.
@@ -306,11 +306,11 @@ An FNN invoice preimage is a fixed 32-byte `Hash256`, so both preimages must be 
 
 ```text
 S           = merchant-generated 32-byte secret
-leg_hash  B = sha256(S)              (leg invoice;  preimage = S)
-hold_hash A = sha256(poseidon(S))    (hold invoice; preimage = poseidon(S))
+merchant_payment_hash B = sha256(S)            (merchant invoice; preimage = S)
+hold_hash A = sha256(poseidon(S))               (hold invoice; preimage = poseidon(S))
 ```
 
-Paying the leg reveals `S`; the LSP derives the hold preimage `poseidon(S)` and settles. But `A` and `B` are two
+Paying the merchant invoice reveals `S`; the LSP derives the hold preimage `poseidon(S)` and settles. But `A` and `B` are two
 unrelated-looking hashes, and the LSP is about to commit capital on the belief that learning `B`'s preimage will
 yield `A`'s. If that belief is false, it pays the merchant and cannot settle the hold.
 
@@ -318,8 +318,8 @@ So before committing, the LSP verifies a proof of exactly that belief:
 
 > `groth16-dual-sha256` — a Groth16 proof of `∃S : sha256(S) = B ∧ sha256(poseidon(S)) = A`.
 
-**The proof cannot come from anyone but the merchant, and this is forced, not chosen.** The derivation runs leg →
-hold, because the LSP learns the leg preimage and needs the hold preimage; so whoever knows `S` can compute
+**The proof cannot come from anyone but the merchant, and this is forced, not chosen.** The derivation runs merchant invoice →
+hold, because the LSP learns the merchant preimage and needs the hold preimage; so whoever knows `S` can compute
 both. The LSP must not know the hold preimage before it pays. Therefore it must not know `S`. Therefore only the
 merchant can prove anything about `S`.
 
@@ -335,11 +335,11 @@ the collision, and with it the entire construction:
 
 ```text
 S    = merchant-generated 32-byte secret
-hash = sha256(S)     (both the customer hold invoice and the merchant leg invoice; preimage = S)
+hash = sha256(S)     (both the customer hold invoice and merchant invoice; preimage = S)
 ```
 
 The **hold node** mints the customer's hold invoice on `hash`. The **paying node** funds the JIT channel and pays
-the merchant's leg invoice, which carries the same `hash`. The merchant claims, revealing `S` to the paying node;
+the merchant invoice, which carries the same `hash`. The merchant claims, revealing `S` to the paying node;
 the LSP settles the hold with `S`. There is nothing to prove because there is no relation between two hashes —
 there is one hash. `JIT_PAY_FIBER_RPC_URL` names the paying node, and the server refuses to start if it resolves
 to the same node as the hold one.
@@ -352,9 +352,9 @@ Two properties this mode must not lose:
 
 - **Routing disjointness.** One hash is live on two payment routes at once. Any node sitting on *both* the
   customer's route to the hold node and the paying node's route to the merchant would learn `S` from the second
-  and could claim on the first. Our topology makes that set empty: the merchant leg always traverses the
+  and could claim on the first. Our topology makes that set empty: the merchant invoice always traverses the
   freshly-funded channel with no intermediaries, and the customer's payment is held *before* that channel
-  exists, so the merchant cannot yet appear on any route. An LSP that forwards the merchant leg over
+  exists, so the merchant cannot yet appear on any route. An LSP that forwards the merchant invoice over
   pre-existing hops rather than a fresh direct channel forfeits this argument and **must not use this mode**.
 - **Durable handoff.** The paying node learns `S` and the hold node needs it. If the paying node claims and then
   dies before `S` is persisted, the hold expires, the customer is refunded, and the LSP has paid for nothing.
@@ -366,7 +366,7 @@ Two properties this mode must not lose:
 | | `linked` | `same_hash` |
 |---|---|---|
 | LSP nodes | one | two (hold + pay) |
-| Invoice hashes | two, proven linked | one, on both legs |
+| Invoice hashes | two, proven linked | one, on both invoices |
 | Merchant artifacts | `.wasm` + `.zkey` — 36.7 MB | none |
 | Merchant work per order | ~0.12 s proving, 95 MB peak | one `sha256` |
 | LSP verification | Groth16 pairing check, ~50 ms | compare two hashes |
@@ -380,7 +380,7 @@ prefers `same_hash` when the LSP advertises it.
 
 ## Timing and expiries
 
-The only way the LSP loses money is to pay the merchant leg and then fail to settle the customer hold, so every
+The only way the LSP loses money is to pay the merchant invoice and then fail to settle the customer hold, so every
 timer is checked against the money-flow rather than assumed. All of this is shared by both modes.
 
 - **Hold vs. open budget.** `createOrder` refuses a hold shorter than one open + one forward + a settle margin —
@@ -389,14 +389,14 @@ timer is checked against the money-flow rather than assumed. All of this is shar
 - **On-chain TLC ceiling, read not assumed.** The invoice expiry is a soft timer; the held payment's TLC has a
   hard on-chain expiry past which the customer can force-close and reclaim. Before forwarding, the LSP reads the
   real TLC expiry from `list_channels` → `pending_tlcs[].expiry` and uses `min(invoice_expiry, tlc_expiry)`.
-- **Leg outlives the hold.** The leg invoice must not expire before the LSP forwards. The client sets the leg
-  expiry above the hold window, and `createOrder` validates the leg's absolute expiry from `parse_invoice`,
-  rejecting `leg_expiry_too_short`. Expiry is read from the *signed invoice*, never from a claimed field.
-- **Durable, retrying settle.** Settlement retries until the leg preimage lands or the hold nears expiry, and
+- **Merchant invoice outlives the hold.** The merchant invoice must not expire before the LSP forwards. The client
+  sets its expiry above the hold window, and `createOrder` validates its absolute expiry from `parse_invoice`,
+  rejecting `merchant_invoice_expiry_too_short`. Expiry is read from the *signed invoice*, never from a claimed field.
+- **Durable, retrying settle.** Settlement retries until the merchant preimage lands or the hold nears expiry, and
   `JitService.resume()` re-drives any order left in flight by a crash — including one already `forwarding`. This
   requires a persistent `JIT_STORE_PATH`; with the in-memory store a crash leaves a held payment to refund at
   expiry.
-- **Where the leg preimage comes from.** The paying node learns it from the TLC fulfillment, but FNN's
+- **Where the merchant preimage comes from.** The paying node learns it from the TLC fulfillment, but FNN's
   `get_payment` does not expose it ([finding #4](./upstream-fiber-findings.md)). So today the LSP settles from
   the merchant's `reveal` call, and reads `get_payment` first only so it will settle without one once FNN
   surfaces the field. **This bounds what JIT guarantees:** a merchant that takes the forward and never reveals
@@ -412,7 +412,7 @@ exposure, and it differs sharply between them.
 argument, and the reason it is preferred.
 
 **Under `linked` the LSP is exposed to the soundness of the linkage proof.** A forged proof for two *unlinked*
-hashes makes the LSP open a channel, pay the merchant leg, and then fail to settle the customer hold: a direct
+hashes makes the LSP open a channel, pay the merchant invoice, and then fail to settle the customer hold: a direct
 loss. Note carefully who this protects. A backdoored key lets a *merchant* steal from the *LSP*. The ceremony
 below is therefore the **LSP's** trust assumption, not the merchant's — the merchant's cost in `linked` is purely
 mechanical, bytes and seconds.
@@ -454,7 +454,7 @@ Everything from here down applies to `linked` only. A `same_hash` deployment can
 ### The statement, and why Poseidon
 
 ```text
-public:  A (hold hash), B (leg hash)     — each as two 128-bit limbs, so nPublic = 4
+public:  A (hold hash), B (merchant payment hash)     — each as two 128-bit limbs, so nPublic = 4
 private: S                               — 32 bytes
 prove:   sha256(S) = B  ∧  sha256(poseidon(S)) = A
 ```
@@ -468,9 +468,9 @@ a SHA-256 either way — `A` directly, or `B` to recover `S`.
 Poseidon is chosen for cost. A SHA-256 block costs roughly 30k constraints; Poseidon costs roughly 250. Using
 SHA-256 for the derivation would push the circuit past 2^16 into the next power of two, doubling the FFT domain
 and, with it, the proving key the merchant must download. The derivation only has to be deterministic and
-**distinct from `sha256(S)`** — were it equal, `hold_preimage` would equal the *public* leg hash and anyone could
+**distinct from `sha256(S)`** — were it equal, `hold_preimage` would equal the *public* merchant payment hash and anyone could
 settle the customer's hold. The JS derivation and `poseidon.circom` must agree exactly; a divergence makes the
-circuit unsatisfiable, so it fails at proof generation rather than after the merchant leg is paid.
+circuit unsatisfiable, so it fails at proof generation rather than after the merchant invoice is paid.
 
 The two hashes are exposed as four field elements rather than 512 bit-signals: `nPublic = 512` would inflate the
 verification key, whose `IC` carries `nPublic + 1` group elements, and make verification a 513-point
@@ -609,7 +609,7 @@ The merchant drives `JitCheckout` from `@fiberlsp/client`:
 const checkout = new JitCheckout({ rpc: merchantRpc, lspBaseUrl, merchantPubkey, merchantAddress, proveLinkage });
 const session = await checkout.checkout({ asset: RUSD, amount: "300000000", expirySeconds: 1800 });
 console.log(session.invoice);            // show to the customer
-const final = await session.settle();    // waits for leg payment, reveals if needed
+const final = await session.settle();    // waits for merchant payment, reveals if needed
 ```
 
 `session` carries `mode`, `invoice` (the customer hold invoice), `paymentHash` (the hold hash), `netAmount`,
@@ -621,7 +621,7 @@ node — supplying it is what enables `same_hash`), advertised `terms`, `support
 `linkageVerifier` (supplying it is what enables `linked`), an optional `minCapacity` floor to satisfy the
 acceptor's UDT auto-accept minimum, an optional persistent `store`, polling controls, and optional
 `deliverWebhook` / `onFraud` hooks. It rejects unsupported assets, duplicate active hashes or invoices, invalid
-proofs, wrong leg hashes or amounts, payments below `min_payment`, over-capacity requests, and unauthorized
+proofs, wrong merchant payment hashes or amounts, payments below `min_payment`, over-capacity requests, and unauthorized
 follow-up calls.
 
 `jit.modes` is **derived from deployment, not operator-set**: a verification key at `LINKED_JIT_VK_PATH` enables

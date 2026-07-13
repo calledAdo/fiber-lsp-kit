@@ -5,18 +5,18 @@ live FNN node accepts (a `Hash256`).
 
 ## Statement
 
-Given public hold hash `A` and leg hash `B`, prove knowledge of a 32-byte secret `S`:
+Given public hold hash `A` and merchant payment hash `B`, prove knowledge of a 32-byte secret `S`:
 
 ```
-B = sha256(S)              (leg invoice;  preimage = S)
+B = sha256(S)              (merchant invoice; preimage = S)
 A = sha256(poseidon(S))    (hold invoice; preimage = poseidon(S))
 ```
 
-Paying the leg reveals `S`, from which the LSP derives the 32-byte hold preimage. Only the two *invoice* hashes
+Paying the merchant invoice reveals `S`, from which the LSP derives the 32-byte hold preimage. Only the two *invoice* hashes
 must be SHA-256 (FNN computes `payment_hash` that way); the derivation carries no security weight, since
 reaching `hold_preimage` means inverting a SHA-256. Poseidon is used because it costs ~250 constraints instead
 of ~30k, halving the FFT domain and the proving key. It only has to be deterministic and distinct from
-`sha256(S)`, or the hold preimage would equal the public leg hash.
+`sha256(S)`, or the hold preimage would equal the public merchant payment hash.
 
 Matches `@fiberlsp/protocol` `linkageDualSha256.ts` (`scheme: groth16-dual-sha256`).
 
@@ -49,7 +49,7 @@ npm install
 ## Public inputs
 
 The two hashes are exposed as **four** field elements — each 256-bit hash split into two 128-bit big-endian
-limbs (`hold_hi, hold_lo, leg_hi, leg_lo`), matching `hashToLimbSignals()` in the protocol package. Exposing
+limbs (`hold_hi, hold_lo, merchant_hash_hi, merchant_hash_lo`), matching `hashToLimbSignals()` in the protocol package. Exposing
 256 bit-signals per hash instead would put `nPublic` at 512, inflating the verification key (its `IC` carries
 `nPublic + 1` group elements) and making verification a 513-point multi-scalar multiplication.
 
@@ -130,5 +130,5 @@ Set `LINKED_JIT_VK_PATH=build/verification_key.json` on the reference server to 
 
 ## Public signals
 
-`public.json` is four field elements — `hold_hi, hold_lo, leg_hi, leg_lo` — the same encoding as
+`public.json` is four field elements — `hold_hi, hold_lo, merchant_hash_hi, merchant_hash_lo` — the same encoding as
 `hashToLimbSignals()` in the protocol package (see *Public inputs*, above).

@@ -6,7 +6,7 @@
  */
 
 /**
- * An opaque proof that the public hold and leg hashes are linked by the statement named in `scheme`.
+ * An opaque proof that the public hold and merchant payment hashes are linked by the named statement.
  */
 export interface LinkageProof {
   scheme: string;
@@ -17,5 +17,5 @@ export interface LinkageProof {
 /** Verifies a merchant's linkage proof for a pair of public hashes. */
 export interface LinkageVerifier {
   readonly scheme: string;
-  verify(a: string, b: string, proof: LinkageProof): boolean | Promise<boolean>;
+  verify(holdHash: string, merchantPaymentHash: string, proof: LinkageProof): boolean | Promise<boolean>;
 }

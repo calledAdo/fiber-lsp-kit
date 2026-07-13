@@ -23,16 +23,17 @@ const S = "0x" + "aa".repeat(32);
 const linked = dualSha256(S);
 const terms: JitTerms = { fee_bps: 100, fee_base: "0", min_payment: "1", max_expiry_seconds: 3600 };
 
-function makeMerchantRpc(legStatuses: string[]) {
+function makeMerchantRpc(merchantInvoiceStatuses: string[]) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
-  const next = () => (legStatuses.length > 1 ? legStatuses.shift()! : legStatuses[0]!);
+  const next = () =>
+    merchantInvoiceStatuses.length > 1 ? merchantInvoiceStatuses.shift()! : merchantInvoiceStatuses[0]!;
   const fetchImpl: FetchLike = async (_url, init) => {
     const { method, params } = JSON.parse(String(init.body)) as { method: string; params: unknown[] };
     const p0 = (params[0] ?? {}) as Record<string, unknown>;
     calls.push({ method, params: p0 });
     let result: unknown = null;
     if (method === "new_invoice") {
-      result = { invoice_address: "fibt_leg", invoice: { data: { payment_hash: linked.leg } } };
+      result = { invoice_address: "fibt_merchant", invoice: { data: { payment_hash: linked.merchantPaymentHash } } };
     } else if (method === "get_invoice") {
       result = { status: next() };
     }
@@ -51,8 +52,8 @@ function makeLspRest(orderStates: JitOrder["state"][] = ["forwarding", "settled"
       target_pubkey: "0xM",
       asset: RUSD,
       hold_hash: linked.hold,
-      leg_hash: linked.leg,
-      merchant_invoice: "fibt_leg",
+      merchant_payment_hash: linked.merchantPaymentHash,
+      merchant_invoice: "fibt_merchant",
       amount: "100000000",
       channel_capacity: "1000000000",
       expiry_seconds: 600,
@@ -85,8 +86,8 @@ function makeLspRest(orderStates: JitOrder["state"][] = ["forwarding", "settled"
   return { fetchImpl, calls };
 }
 
-function makeCheckout(legStatuses: string[], orderStates?: JitOrder["state"][]) {
-  const merchant = makeMerchantRpc(legStatuses);
+function makeCheckout(merchantInvoiceStatuses: string[], orderStates?: JitOrder["state"][]) {
+  const merchant = makeMerchantRpc(merchantInvoiceStatuses);
   const rest = makeLspRest(orderStates);
   const checkout = new JitCheckout({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://merchant", fetchImpl: merchant.fetchImpl }),
@@ -95,7 +96,8 @@ function makeCheckout(legStatuses: string[], orderStates?: JitOrder["state"][]) 
     merchantAddress: "/ip4/127.0.0.1/tcp/9999",
     randomBytes: () => new Uint8Array(32).fill(0xaa),
     sleep: async () => {},
-    proveLinkage: (_hold, _leg, secret) => exposedSecretProof(secret),
+    proveLinkage: (_hold, _merchantPaymentHash, secret) => exposedSecretProof(secret),
+    merchantInvoiceExpiryBufferSeconds: 1800,
   });
   return { checkout, merchant, rest };
 }
@@ -109,16 +111,16 @@ test("checkout registers canonical single-node JIT order and returns customer ho
   assert.equal(session.netAmount, "99000000");
 
   const invoice = merchant.calls.find((c) => c.method === "new_invoice")!.params;
-  assert.equal(invoice.payment_preimage, linked.legPreimage);
+  assert.equal(invoice.payment_preimage, linked.merchantPreimage);
   assert.equal(invoice.hash_algorithm, "sha256");
 
   const intent = rest.calls.find((c) => c.path === "/lsp/v1/jit/orders")!.body as Record<string, unknown>;
   assert.equal(intent.hold_hash, linked.hold);
-  assert.equal(intent.leg_hash, linked.leg);
+  assert.equal(intent.merchant_payment_hash, linked.merchantPaymentHash);
   assert.ok(!("payment_hash" in intent));
 });
 
-test("settle reveals leg preimage with bearer token when LSP has not auto-settled", async () => {
+test("settle reveals merchant preimage with bearer token when LSP has not auto-settled", async () => {
   const { checkout, rest } = makeCheckout(["Open", "Paid"], ["forwarding"]);
   const session = await checkout.checkout({ asset: RUSD, amount: "100000000" });
   const settled = await session.settle({ intervalMs: 0 });
@@ -126,7 +128,7 @@ test("settle reveals leg preimage with bearer token when LSP has not auto-settle
   assert.equal(settled.state, "settled");
   const reveal = rest.calls.find((c) => c.path.endsWith("/reveal"))!;
   assert.equal(reveal.auth, "Bearer tok_1");
-  assert.deepEqual(reveal.body, { preimage: linked.legPreimage });
+  assert.deepEqual(reveal.body, { preimage: linked.merchantPreimage });
 });
 
 test("settle returns settled order without reveal when LSP already derived the hold preimage", async () => {

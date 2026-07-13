@@ -87,16 +87,16 @@ export function linkageWitnessInput(secretHex: string): {
   secret: number[];
   hold_hi: string;
   hold_lo: string;
-  leg_hi: string;
-  leg_lo: string;
+  merchant_hash_hi: string;
+  merchant_hash_lo: string;
 } {
   const h = secretHex.startsWith("0x") ? secretHex.slice(2) : secretHex;
   if (h.length !== 64 || !/^[0-9a-fA-F]+$/.test(h)) throw new Error("secret must be a 32-byte hex string");
-  const { hold, leg } = dualSha256("0x" + h);
+  const { hold, merchantPaymentHash } = dualSha256("0x" + h);
   const [hold_hi, hold_lo] = hashToLimbSignals(hold);
-  const [leg_hi, leg_lo] = hashToLimbSignals(leg);
+  const [merchant_hash_hi, merchant_hash_lo] = hashToLimbSignals(merchantPaymentHash);
   const secret = Array.from({ length: 32 }, (_, i) => parseInt(h.slice(i * 2, i * 2 + 2), 16));
-  return { secret, hold_hi, hold_lo, leg_hi, leg_lo };
+  return { secret, hold_hi, hold_lo, merchant_hash_hi, merchant_hash_lo };
 }
 
 /** The bundled WebAssembly prover (arkworks, compiled from `tools/linkage-prover`). Loaded once, on first use. */
@@ -113,8 +113,8 @@ function wasmProver(): WasmProver {
 
 /** Check the prover's public signals against the order's hashes, then wrap. A mismatch means the artifacts or
  *  the secret disagree, and the LSP would reject the proof anyway. */
-function bindAndWrap(proof: unknown, publicSignals: string[], holdHash: string, legHash: string): LinkageProof {
-  const expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(legHash)];
+function bindAndWrap(proof: unknown, publicSignals: string[], holdHash: string, merchantPaymentHash: string): LinkageProof {
+  const expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(merchantPaymentHash)];
   if (publicSignals.length !== expected.length) {
     throw new LinkedProverError("public_signal_count", `prover emitted ${publicSignals.length} public signals`);
   }
@@ -135,10 +135,10 @@ function bindAndWrap(proof: unknown, publicSignals: string[], holdHash: string, 
  */
 export function makeLinkedProver(
   cfg: LinkedProverConfig,
-): (holdHash: string, legHash: string, secretHex: string) => Promise<LinkageProof> {
+): (holdHash: string, merchantPaymentHash: string, secretHex: string) => Promise<LinkageProof> {
   if ((cfg.backend ?? "wasm") === "native") return makeNativeLinkedProver(cfg);
 
-  return async (holdHash, legHash, secretHex) => {
+  return async (holdHash, merchantPaymentHash, secretHex) => {
     const [wasm, key] = await Promise.all([readFile(cfg.wasmPath), readFile(cfg.zkeyPath)]);
     const wtns = await calculateWtnsBin(wasm, linkageWitnessInput(secretHex));
     let out: { proof: unknown; publicSignals: string[] };
@@ -147,14 +147,14 @@ export function makeLinkedProver(
     } catch (e) {
       throw new LinkedProverError("prover_failed", `wasm prover failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    return bindAndWrap(out.proof, out.publicSignals, holdHash, legHash);
+    return bindAndWrap(out.proof, out.publicSignals, holdHash, merchantPaymentHash);
   };
 }
 
 /** The native-binary prover: converts the `.zkey` once, caches it, then shells out per proof. */
 function makeNativeLinkedProver(
   cfg: LinkedProverConfig,
-): (holdHash: string, legHash: string, secretHex: string) => Promise<LinkageProof> {
+): (holdHash: string, merchantPaymentHash: string, secretHex: string) => Promise<LinkageProof> {
   const prover = cfg.proverPath ?? process.env.FIBERLSP_LINKED_PROVER ?? "linkage-prover";
   const timeoutMs = (cfg.timeoutSeconds ?? 120) * 1000;
   const wantCache = cfg.cache ?? true;
@@ -175,7 +175,7 @@ function makeNativeLinkedProver(
     return keyPromise;
   };
 
-  return async (holdHash, legHash, secretHex) => {
+  return async (holdHash, merchantPaymentHash, secretHex) => {
     const wasm = await readFile(cfg.wasmPath);
     const wtns = await calculateWtnsBin(wasm, linkageWitnessInput(secretHex));
     const keyPath = await provingKey();
@@ -200,7 +200,7 @@ function makeNativeLinkedProver(
       const proof = JSON.parse(await readFile(proofPath, "utf8")) as unknown;
       const publicSignals = JSON.parse(await readFile(publicPath, "utf8")) as string[];
 
-      const expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(legHash)];
+      const expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(merchantPaymentHash)];
       if (publicSignals.length !== expected.length) {
         throw new LinkedProverError("public_signal_count", `prover emitted ${publicSignals.length} public signals`);
       }

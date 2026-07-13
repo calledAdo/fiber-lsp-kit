@@ -5,7 +5,7 @@
 // Exposes a tiny local control port. `actions/request-invoice.mjs` POSTs to it to begin a JIT checkout: the
 // merchant negotiates the mode the LSP offers (building a REAL Groth16 linkage proof for `linked` when the
 // proving artifacts are present, else `same_hash`), prints the customer's hold invoice, and then waits — in
-// the background — for the LSP to open a channel, forward the leg, and settle. It logs both moments.
+// the background — for the LSP to open a channel, pay the merchant invoice, and settle. It logs both moments.
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
@@ -40,10 +40,10 @@ async function startCheckout(body) {
     mode = "linked";
     const { makeLinkedProver } = await import("../../../packages/prover-linked/dist/index.js");
     const prover = makeLinkedProver({ zkeyPath: artifacts.zkey, wasmPath: artifacts.wasm });
-    proveLinkage = async (holdHash, legHash, secretHex) => {
+    proveLinkage = async (holdHash, merchantPaymentHash, secretHex) => {
       console.log(`[merchant] proving linkage (secret stays private)…`);
       const t = Date.now();
-      const proof = await prover(holdHash, legHash, secretHex);
+      const proof = await prover(holdHash, merchantPaymentHash, secretHex);
       console.log(`[merchant] Groth16 proof built in ${((Date.now() - t) / 1000).toFixed(1)}s → sending to the LSP to verify`);
       return proof;
     };

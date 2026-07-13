@@ -150,8 +150,8 @@ Separately, give the TLC rejection a distinct code (e.g. `InvoiceAlreadyPaid`): 
 can't be both hold-payee and payer for one hash") are legitimate, but the current name hides them.
 
 **Note.** The constraint is **per node**, and that is load-bearing for us: with a second node holding while a
-first pays, the same hash rides both legs safely (verified live — the hold stayed `Received` and settled from
-the leg preimage). That is the `same_hash` JIT mode, and it is why it needs no linkage proof at all.
+first pays, the same hash secures both invoice payments safely (verified live — the hold stayed `Received` and settled from
+the merchant preimage). That is the `same_hash` JIT mode, and it is why it needs no linkage proof at all.
 
 ---
 

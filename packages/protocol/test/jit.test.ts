@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jitFee, jitForwardAmount, type JitTerms } from "@fiberlsp/protocol";
+import {
+  CKB,
+  jitFee,
+  jitForwardAmount,
+  type CreateJitOrderRequest,
+  type JitTerms,
+} from "@fiberlsp/protocol";
 
 const terms = (over: Partial<JitTerms> = {}): JitTerms => ({
   fee_bps: 100, // 1% of the payment
@@ -8,6 +14,20 @@ const terms = (over: Partial<JitTerms> = {}): JitTerms => ({
   min_payment: "10000000", // 0.1 RUSD
   max_expiry_seconds: 3600,
   ...over,
+});
+
+test("JIT order requests name the merchant invoice payment hash by role", () => {
+  const request: CreateJitOrderRequest = {
+    target_pubkey: "02aa",
+    target_address: "/ip4/127.0.0.1/tcp/8228",
+    asset: CKB,
+    hold_hash: "0x" + "11".repeat(32),
+    merchant_payment_hash: "0x" + "22".repeat(32),
+    merchant_invoice: "fibt1merchant",
+    amount: "1000",
+  };
+
+  assert.equal(request.merchant_payment_hash, "0x" + "22".repeat(32));
 });
 
 test("jitFee: proportional bps of the gross payment, ceil-rounded", () => {

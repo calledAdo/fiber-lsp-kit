@@ -1,23 +1,24 @@
 /**
- * Linked hold/leg hashes for single-node JIT — no blake2b circuit needed, and settleable through a real
+ * Linked hold and merchant-payment hashes for single-node JIT, settleable through a real
  * FNN node.
  *
  * FNN invoice preimages are a fixed 32-byte `Hash256` (payment_hash = sha256/blake2b of exactly 32 bytes), so
  * every preimage here is kept to 32 bytes:
  *
- *   leg_preimage  = S                →  B = sha256(S)              (merchant leg invoice)
- *   hold_preimage = poseidon(S)      →  A = sha256(hold_preimage)  (customer hold invoice)
+ *   merchant_preimage = S           → B = sha256(S)             (merchant invoice)
+ *   hold_preimage     = poseidon(S) → A = sha256(hold_preimage) (customer hold invoice)
  *
  * Both preimages are 32 bytes, so both invoices issue and settle on a real node. A ≠ B, so one node holds
- * under A and pays under B with no collision. The leg preimage is S itself, so paying the leg reveals S and
- * the LSP derives hold_preimage = poseidon(S) with no merchant reveal RPC on the honest path.
+ * under A and pays under B with no collision. The merchant preimage is S itself, so paying the merchant
+ * invoice reveals S and the LSP derives hold_preimage = poseidon(S) with no merchant reveal RPC on the honest
+ * path.
  *
  * Only the two *invoice* hashes must be SHA-256 (FNN computes payment_hash that way). The derivation is ours
  * to choose, and it carries no security weight: hold_preimage stays unpredictable because reaching it means
  * inverting a SHA-256 — either A directly, or B to recover S. So Poseidon is used purely because it is cheap
  * in-circuit (~250 constraints vs ~30k for a SHA-256 block), which keeps the proving key small. It must only
  * be deterministic, 32-byte valued, and distinct from sha256(S) — otherwise hold_preimage would equal the
- * *public* leg hash B and anyone could settle the customer hold.
+ * public merchant payment hash B and anyone could settle the customer hold.
  *
  * The ZK statement is ∃S : sha256(S)=B ∧ sha256(poseidon(S))=A — two SHA-256 blocks.
  */
@@ -25,7 +26,7 @@ import { createHash } from "node:crypto";
 import { poseidon2 } from "poseidon-lite";
 import type { LinkageProof, LinkageVerifier } from "./linkage.js";
 
-/** Length of the random secret S (bytes). It is also the leg preimage. */
+/** Length of the random secret S (bytes). It is also the merchant invoice preimage. */
 export const JIT_LINK_SECRET_BYTES = 32;
 
 export const EXPOSED_SECRET_SCHEME = "exposed-secret";
@@ -34,10 +35,10 @@ export const GROTH16_DUAL_SHA256_SCHEME = "groth16-dual-sha256";
 export interface DualSha256Hashes {
   /** sha256(poseidon(S)) — hold invoice hash (customer pays). */
   hold: string;
-  /** sha256(S) — leg invoice hash (LSP forwards). */
-  leg: string;
-  /** Leg preimage = S (32 bytes). Merchant issues the leg invoice with this + hash_algorithm sha256. */
-  legPreimage: string;
+  /** sha256(S) — merchant invoice payment hash (LSP forwards). */
+  merchantPaymentHash: string;
+  /** Merchant preimage = S (32 bytes). The invoice uses this with hash_algorithm sha256. */
+  merchantPreimage: string;
   /** Hold preimage = poseidon(S) (32 bytes). LSP settles the hold with this. */
   holdPreimage: string;
 }
@@ -64,8 +65,8 @@ function eq(x: string, y: string): boolean {
   return x.toLowerCase() === y.toLowerCase();
 }
 
-/** The leg preimage is S itself (32 bytes) — a live FNN node can settle with it directly. */
-export function deriveLegPreimageBytes(secret: Uint8Array): Uint8Array {
+/** The merchant preimage is S itself (32 bytes), so a live FNN node can settle with it directly. */
+export function deriveMerchantPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
     throw new Error(`JIT secret must be ${JIT_LINK_SECRET_BYTES} bytes`);
   }
@@ -78,7 +79,7 @@ export function deriveLegPreimageBytes(secret: Uint8Array): Uint8Array {
  * S is split into two 128-bit big-endian limbs (a 32-byte value exceeds the BN254 field), fed to
  * `Poseidon(2)`, and the field element is encoded big-endian into 32 bytes. This must match
  * `dual_sha256_linkage.circom` exactly — a divergence makes the circuit unsatisfiable, so a mismatch fails at
- * proof generation rather than after the merchant leg has been paid.
+ * proof generation rather than after the merchant invoice has been paid.
  */
 export function deriveHoldPreimageBytes(secret: Uint8Array): Uint8Array {
   if (secret.length !== JIT_LINK_SECRET_BYTES) {
@@ -91,15 +92,15 @@ export function deriveHoldPreimageBytes(secret: Uint8Array): Uint8Array {
   return toBytes("0x" + out.toString(16).padStart(64, "0"));
 }
 
-/** The leg preimage is S directly; return it when it is a well-formed 32-byte value, else null. */
-export function extractSecretFromLegPreimage(legPreimage: Uint8Array): Uint8Array | null {
-  if (legPreimage.length !== JIT_LINK_SECRET_BYTES) return null;
-  return legPreimage.slice();
+/** The merchant preimage is S directly; return it when it is a well-formed 32-byte value, else null. */
+export function extractSecretFromMerchantPreimage(merchantPreimage: Uint8Array): Uint8Array | null {
+  if (merchantPreimage.length !== JIT_LINK_SECRET_BYTES) return null;
+  return merchantPreimage.slice();
 }
 
-/** Derive the hold preimage from the leg preimage (= S) using the public derivation. */
-export function deriveHoldPreimageFromLeg(legPreimageHex: string): string | null {
-  const secret = extractSecretFromLegPreimage(toBytes(legPreimageHex));
+/** Derive the hold preimage from the merchant preimage (= S) using the public derivation. */
+export function deriveHoldPreimageFromMerchant(merchantPreimageHex: string): string | null {
+  const secret = extractSecretFromMerchantPreimage(toBytes(merchantPreimageHex));
   if (!secret) return null;
   return toHex(deriveHoldPreimageBytes(secret));
 }
@@ -107,46 +108,48 @@ export function deriveHoldPreimageFromLeg(legPreimageHex: string): string | null
 /** Both invoice hashes + their 32-byte preimages, for a 32-byte secret (hex or bytes). */
 export function dualSha256(secret: Uint8Array | string): DualSha256Hashes {
   const s = typeof secret === "string" ? toBytes(secret) : secret;
-  const leg = deriveLegPreimageBytes(s);
+  const merchantPreimage = deriveMerchantPreimageBytes(s);
   const hold = deriveHoldPreimageBytes(s);
   return {
     hold: sha256Hex(hold),
-    leg: sha256Hex(leg),
-    legPreimage: toHex(leg),
+    merchantPaymentHash: sha256Hex(merchantPreimage),
+    merchantPreimage: toHex(merchantPreimage),
     holdPreimage: toHex(hold),
   };
 }
 
-/** Ground truth: does secret S link hold hash A and leg hash B? */
-export function verifyDualSha256Secret(secretHex: string, holdHash: string, legHash: string): boolean {
-  const { hold, leg } = dualSha256(secretHex);
-  return eq(hold, holdHash) && eq(leg, legHash);
+/** Ground truth: does secret S link hold hash A and merchant payment hash B? */
+export function verifyDualSha256Secret(secretHex: string, holdHash: string, merchantPaymentHash: string): boolean {
+  const derived = dualSha256(secretHex);
+  return eq(derived.hold, holdHash) && eq(derived.merchantPaymentHash, merchantPaymentHash);
 }
 
-/** Settlement check given the leg preimage revealed by the forward payment. */
+/** Settlement check given the merchant preimage revealed by the forward payment. */
 export function verifyDualSha256Linkage(
-  legPreimageHex: string,
+  merchantPreimageHex: string,
   holdHash: string,
-  legHash: string,
+  merchantPaymentHash: string,
 ): boolean {
-  if (!eq(sha256Hex(toBytes(legPreimageHex)), legHash)) return false;
-  const holdPreimage = deriveHoldPreimageFromLeg(legPreimageHex);
+  if (!eq(sha256Hex(toBytes(merchantPreimageHex)), merchantPaymentHash)) return false;
+  const holdPreimage = deriveHoldPreimageFromMerchant(merchantPreimageHex);
   if (!holdPreimage) return false;
   return eq(sha256Hex(toBytes(holdPreimage)), holdHash);
 }
 
 /**
- * Fraud proof when the leg preimage settles B but does not map to hold hash A under the derivation.
- * Returns (A, B, leg_preimage) for bond slashing / audit.
+ * Fraud proof when the merchant preimage settles B but does not map to hold hash A under the derivation.
+ * Returns (A, B, merchant_preimage) for bond slashing / audit.
  */
 export function fraudEvidenceDualSha256(
-  legPreimageHex: string,
+  merchantPreimageHex: string,
   holdHash: string,
-  legHash: string,
+  merchantPaymentHash: string,
 ): { a: string; b: string; preimage: string } | null {
-  const legOk = eq(sha256Hex(toBytes(legPreimageHex)), legHash);
-  const holdOk = verifyDualSha256Linkage(legPreimageHex, holdHash, legHash);
-  return legOk && !holdOk ? { a: holdHash, b: legHash, preimage: legPreimageHex } : null;
+  const merchantPaymentOk = eq(sha256Hex(toBytes(merchantPreimageHex)), merchantPaymentHash);
+  const holdOk = verifyDualSha256Linkage(merchantPreimageHex, holdHash, merchantPaymentHash);
+  return merchantPaymentOk && !holdOk
+    ? { a: holdHash, b: merchantPaymentHash, preimage: merchantPreimageHex }
+    : null;
 }
 
 /** Test/trusted only — reveals S to the LSP before forward (not zero-knowledge). */
@@ -156,10 +159,10 @@ export function exposedSecretProof(secretHex: string): LinkageProof {
 
 export const exposedSecretVerifier: LinkageVerifier = {
   scheme: EXPOSED_SECRET_SCHEME,
-  verify(holdHash, legHash, proof) {
+  verify(holdHash, merchantPaymentHash, proof) {
     if (proof.scheme !== EXPOSED_SECRET_SCHEME) return false;
     try {
-      return verifyDualSha256Secret(proof.data, holdHash, legHash);
+      return verifyDualSha256Secret(proof.data, holdHash, merchantPaymentHash);
     } catch {
       return false;
     }
@@ -182,7 +185,7 @@ export interface Groth16DualSha256VerifierConfig {
 export function createGroth16DualSha256Verifier(cfg: Groth16DualSha256VerifierConfig): LinkageVerifier {
   return {
     scheme: GROTH16_DUAL_SHA256_SCHEME,
-    verify(holdHash, legHash, proof) {
+    verify(holdHash, merchantPaymentHash, proof) {
       if (proof.scheme !== GROTH16_DUAL_SHA256_SCHEME) return false;
       let payload: Groth16DualSha256ProofPayload;
       try {
@@ -195,7 +198,7 @@ export function createGroth16DualSha256Verifier(cfg: Groth16DualSha256VerifierCo
       }
       let expected: string[];
       try {
-        expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(legHash)];
+        expected = [...hashToLimbSignals(holdHash), ...hashToLimbSignals(merchantPaymentHash)];
       } catch {
         return false;
       }
@@ -237,9 +240,9 @@ export function compositeLinkageVerifier(verifiers: LinkageVerifier[]): LinkageV
   const byScheme = new Map(verifiers.map((v) => [v.scheme, v]));
   return {
     scheme: "composite",
-    verify(holdHash, legHash, proof) {
+    verify(holdHash, merchantPaymentHash, proof) {
       const v = byScheme.get(proof.scheme);
-      return v ? v.verify(holdHash, legHash, proof) : false;
+      return v ? v.verify(holdHash, merchantPaymentHash, proof) : false;
     },
   };
 }

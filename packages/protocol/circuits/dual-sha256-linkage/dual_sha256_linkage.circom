@@ -7,14 +7,14 @@ include "circomlib/circuits/poseidon.circom";
 // Single-node JIT linkage (LSPS-Fiber).
 // Both invoice preimages are kept to 32 bytes so a live FNN node can settle them.
 // Proves knowledge of a private 32-byte secret S such that:
-//   leg_hash  = sha256(S)              (leg invoice;  preimage is S)
-//   hold_hash = sha256(poseidon(S))    (hold invoice; preimage is poseidon(S))
+//   merchant_payment_hash = sha256(S)           (merchant invoice; preimage is S)
+//   hold_hash = sha256(poseidon(S))              (hold invoice; preimage is poseidon(S))
 //
 // Only the two invoice hashes must be SHA-256 — FNN computes payment_hash that way. The derivation
 // poseidon(S) is ours to choose and carries no security weight: reaching hold_preimage means inverting a
-// SHA-256 (either hold_hash, or leg_hash to recover S). Poseidon is used because it costs ~250 constraints
+// SHA-256 (either hold_hash, or merchant_payment_hash to recover S). Poseidon costs about 250 constraints
 // instead of ~30k for a SHA-256 block, which halves the FFT domain and the proving key. It only has to be
-// deterministic and distinct from sha256(S), or hold_preimage would equal the public leg_hash.
+// deterministic and distinct from sha256(S), or hold_preimage would equal the public merchant_payment_hash.
 //
 // Each 256-bit hash is exposed as two 128-bit big-endian limbs rather than 256 bit signals, keeping nPublic
 // at 4 instead of 512 (the verifying key's IC carries nPublic + 1 group elements).
@@ -25,8 +25,8 @@ template DualSha256Linkage() {
     // public: big-endian 128-bit limbs. hi = bytes 0..15, lo = bytes 16..31.
     signal input hold_hi;
     signal input hold_lo;
-    signal input leg_hi;
-    signal input leg_lo;
+    signal input merchant_hash_hi;
+    signal input merchant_hash_lo;
 
     component secretBits[32];
     for (var s = 0; s < 32; s++) {
@@ -34,11 +34,11 @@ template DualSha256Linkage() {
         secretBits[s].in <== secret[s];
     }
 
-    // leg_hash = sha256(S)  (32-byte preimage)
-    component legSha = Sha256(256);
+    // merchant_payment_hash = sha256(S)  (32-byte preimage)
+    component merchantSha = Sha256(256);
     for (var i = 0; i < 32; i++) {
         for (var bit = 0; bit < 8; bit++) {
-            legSha.in[i * 8 + bit] <== secretBits[i].out[7 - bit];
+            merchantSha.in[i * 8 + bit] <== secretBits[i].out[7 - bit];
         }
     }
 
@@ -71,19 +71,19 @@ template DualSha256Linkage() {
     // Bits2Num.in[k] carries weight 2^k, so the bits are fed in reverse.
     component holdHi = Bits2Num(128);
     component holdLo = Bits2Num(128);
-    component legHi = Bits2Num(128);
-    component legLo = Bits2Num(128);
+    component merchantHashHi = Bits2Num(128);
+    component merchantHashLo = Bits2Num(128);
     for (var b = 0; b < 128; b++) {
         holdHi.in[b] <== holdOuter.out[127 - b];
         holdLo.in[b] <== holdOuter.out[255 - b];
-        legHi.in[b] <== legSha.out[127 - b];
-        legLo.in[b] <== legSha.out[255 - b];
+        merchantHashHi.in[b] <== merchantSha.out[127 - b];
+        merchantHashLo.in[b] <== merchantSha.out[255 - b];
     }
 
     hold_hi === holdHi.out;
     hold_lo === holdLo.out;
-    leg_hi === legHi.out;
-    leg_lo === legLo.out;
+    merchant_hash_hi === merchantHashHi.out;
+    merchant_hash_lo === merchantHashLo.out;
 }
 
-component main { public [hold_hi, hold_lo, leg_hi, leg_lo] } = DualSha256Linkage();
+component main { public [hold_hi, hold_lo, merchant_hash_hi, merchant_hash_lo] } = DualSha256Linkage();

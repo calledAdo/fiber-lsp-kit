@@ -21,7 +21,7 @@ test("the secret must be 32 bytes — a live FNN preimage is a fixed-width Hash2
   assert.throws(() => sameHashLink("0x" + "11".repeat(33)), /32 bytes/);
 });
 
-test("the leg preimage settles the hold, because the hold is the same hash", () => {
+test("the merchant preimage settles the hold, because the hold is the same hash", () => {
   const link = sameHashLink(S);
   assert.equal(verifySameHashLinkage(link.preimage, link.hash, link.hash), true);
 });
@@ -44,12 +44,12 @@ test("linkage is rejected for a preimage of the wrong width", () => {
   assert.equal(verifySameHashLinkage("0x" + "11".repeat(31), link.hash, link.hash), false);
 });
 
-test("the same secret drives both constructions, and same_hash reuses the linked leg hash", () => {
-  // leg_hash = sha256(S) in both modes; same_hash simply reuses it as the hold hash instead of
+test("the same secret drives both constructions, and same_hash reuses the linked merchant payment hash", () => {
+  // merchant_payment_hash = sha256(S) in both modes; same_hash simply reuses it as the hold hash instead of
   // sha256(poseidon(S)). That is the entire difference, and it is why the proof disappears.
   const linked = dualSha256(S);
   const same = sameHashLink(S);
-  assert.equal(same.hash, linked.leg);
-  assert.equal(same.preimage, linked.legPreimage);
-  assert.notEqual(linked.hold, linked.leg);
+  assert.equal(same.hash, linked.merchantPaymentHash);
+  assert.equal(same.preimage, linked.merchantPreimage);
+  assert.notEqual(linked.hold, linked.merchantPaymentHash);
 });

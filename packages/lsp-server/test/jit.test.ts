@@ -40,8 +40,8 @@ function req(over: Partial<CreateJitOrderRequest> = {}): CreateJitOrderRequest {
     target_address: "/ip4/127.0.0.1/tcp/9999",
     asset: RUSD,
     hold_hash: linked.hold,
-    leg_hash: linked.leg,
-    merchant_invoice: "fibt_leg",
+    merchant_payment_hash: linked.merchantPaymentHash,
+    merchant_invoice: "fibt_merchant",
     linkage_proof: exposedSecretProof(S),
     amount: "100000000",
     ...over,
@@ -50,13 +50,13 @@ function req(over: Partial<CreateJitOrderRequest> = {}): CreateJitOrderRequest {
 
 function makeNode(
   over: {
-    legHash?: string;
-    legAmount?: string;
+    merchantPaymentHash?: string;
+    merchantInvoiceAmount?: string;
     paymentPreimage?: string;
     paymentStatuses?: string[];
     holdStatuses?: string[];
-    legTimestamp?: string; // hex ms
-    legExpirySec?: string; // hex seconds
+    merchantInvoiceTimestamp?: string; // hex ms
+    merchantInvoiceExpirySec?: string; // hex seconds
     tlcExpiryMsHex?: string; // hex ms; adds a pending_tlc for linked.hold on the opened channel
   } = {},
 ) {
@@ -88,11 +88,11 @@ function makeNode(
       case "parse_invoice":
         result = {
           invoice: {
-            amount: over.legAmount ?? "99000000",
+            amount: over.merchantInvoiceAmount ?? "99000000",
             data: {
-              payment_hash: over.legHash ?? linked.leg,
-              ...(over.legTimestamp ? { timestamp: over.legTimestamp } : {}),
-              ...(over.legExpirySec ? { attrs: [{ expiry_time: over.legExpirySec }] } : {}),
+              payment_hash: over.merchantPaymentHash ?? linked.merchantPaymentHash,
+              ...(over.merchantInvoiceTimestamp ? { timestamp: over.merchantInvoiceTimestamp } : {}),
+              ...(over.merchantInvoiceExpirySec ? { attrs: [{ expiry_time: over.merchantInvoiceExpirySec }] } : {}),
             },
           },
         };
@@ -131,7 +131,7 @@ function makeNode(
         break;
       case "send_payment":
         captured.sentInvoice = String(p0.invoice);
-        result = { payment_hash: linked.leg, status: "Created" };
+        result = { payment_hash: linked.merchantPaymentHash, status: "Created" };
         break;
       case "get_payment": {
         const status = next(paymentStatuses);
@@ -139,10 +139,10 @@ function makeNode(
           return { json: async () => ({ jsonrpc: "2.0", id: 1, error: { message: "payment not found" } }) };
         }
         result = {
-          payment_hash: linked.leg,
+          payment_hash: linked.merchantPaymentHash,
           status,
           fee: "0x0",
-          ...(over.paymentPreimage === undefined ? { payment_preimage: linked.legPreimage } : {}),
+          ...(over.paymentPreimage === undefined ? { payment_preimage: linked.merchantPreimage } : {}),
           ...(over.paymentPreimage ? { payment_preimage: over.paymentPreimage } : {}),
         };
         break;
@@ -186,11 +186,11 @@ test("single-node JIT holds A, pays B, derives hold preimage, and settles", asyn
 
   const settled = await svc.run(order.jit_order_id);
   assert.equal(settled.state, "settled");
-  assert.equal(node.captured.sentInvoice, "fibt_leg");
+  assert.equal(node.captured.sentInvoice, "fibt_merchant");
   assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
 });
 
-test("fallback reveal settles when get_payment omits the leg preimage", async () => {
+test("fallback reveal settles when get_payment omits the merchant preimage", async () => {
   const { svc, node } = makeService(makeNode({ paymentPreimage: "" }));
   const order = await svc.createOrder(req());
 
@@ -198,7 +198,7 @@ test("fallback reveal settles when get_payment omits the leg preimage", async ()
   assert.equal(afterRun.state, "forwarding");
   assert.equal(node.captured.settled, "");
 
-  const settled = await svc.reveal(order.jit_order_id, linked.legPreimage, "tok_1");
+  const settled = await svc.reveal(order.jit_order_id, linked.merchantPreimage, "tok_1");
   assert.equal(settled.state, "settled");
   assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
 });
@@ -208,7 +208,7 @@ test("bad early reveal is rejected and does not poison later settlement", async 
   const order = await svc.createOrder(req());
 
   await assert.rejects(
-    svc.reveal(order.jit_order_id, other.legPreimage, "tok_1"),
+    svc.reveal(order.jit_order_id, other.merchantPreimage, "tok_1"),
     (e: JitError) => e.code === "bad_preimage",
   );
 
@@ -236,7 +236,7 @@ test("createOrder enforces offered asset and capacity limits", async () => {
   );
 });
 
-test("createOrder rejects duplicate active hold, leg, or merchant invoice", async () => {
+test("createOrder rejects a duplicate active hold or merchant invoice", async () => {
   const { svc } = makeService();
   await svc.createOrder(req());
 
@@ -261,11 +261,11 @@ test("createOrder rejects (as a 4xx JitError) when the fee exceeds the payment",
   assert.ok(!node.calls.includes("new_invoice"), "no hold minted when the fee swallows the payment");
 });
 
-test("createOrder rejects a leg invoice that expires before the hold", async () => {
+test("createOrder rejects a merchant invoice that expires before the hold", async () => {
   const nowSec = 1_000_000;
   const node = makeNode({
-    legTimestamp: "0x" + (BigInt(nowSec) * 1000n).toString(16), // leg created "now"
-    legExpirySec: "0xa", // valid only 10s → expires long before the ~600s hold
+    merchantInvoiceTimestamp: "0x" + (BigInt(nowSec) * 1000n).toString(16), // merchant invoice created "now"
+    merchantInvoiceExpirySec: "0xa", // valid only 10s → expires long before the ~600s hold
   });
   const svc = new JitService({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
@@ -279,7 +279,10 @@ test("createOrder rejects a leg invoice that expires before the hold", async () 
     idgen: () => "jit_1",
     tokenGenerator: () => "tok_1",
   });
-  await assert.rejects(svc.createOrder(req()), (e: JitError) => e.code === "leg_expiry_too_short");
+  await assert.rejects(
+    svc.createOrder(req()),
+    (e: JitError) => e.code === "merchant_invoice_expiry_too_short",
+  );
 });
 
 test("run refunds when the on-chain TLC expiry is too close, even though the invoice expiry is not", async () => {
@@ -301,7 +304,7 @@ test("run refunds when the on-chain TLC expiry is too close, even though the inv
   const order = await svc.createOrder(req({ expiry_seconds: 600 })); // hold expiry far away (nowSec+600)
   const done = await svc.run(order.jit_order_id);
   assert.equal(done.state, "refunded"); // the TLC ceiling, not the invoice, forced the refund
-  assert.equal(node.captured.sentInvoice, "", "merchant leg never paid");
+  assert.equal(node.captured.sentInvoice, "", "merchant invoice never paid");
 });
 
 test("resume() re-drives a forwarding order to settlement (crash recovery)", async () => {
@@ -337,7 +340,7 @@ test("terms advertise the computed min_expiry_seconds so a merchant can inspect 
 });
 
 test("JIT fee is pluggable via feeFor (pricing is policy, not mechanism)", async () => {
-  const node = makeNode({ legAmount: "99999995" });
+  const node = makeNode({ merchantInvoiceAmount: "99999995" });
   const svc = new JitService({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
     terms,
@@ -355,7 +358,7 @@ test("JIT fee is pluggable via feeFor (pricing is policy, not mechanism)", async
   assert.equal(order.forward_amount, "99999995");
 });
 
-test("concurrent creates with the same leg hash cannot both pass the duplicate guard", async () => {
+test("concurrent creates with the same merchant payment hash cannot both pass the duplicate guard", async () => {
   const { svc } = makeService();
   const results = await Promise.allSettled([svc.createOrder(req()), svc.createOrder(req())]);
   const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -476,6 +479,6 @@ test("run refunds instead of paying the merchant when the hold is about to expir
   const done = await svc.run(order.jit_order_id);
   assert.equal(done.state, "refunded");
   assert.match(done.failure_reason ?? "", /hold lifetime/);
-  assert.equal(node.captured.sentInvoice, "", "merchant leg was never paid");
+  assert.equal(node.captured.sentInvoice, "", "merchant invoice was never paid");
   assert.equal(node.captured.cancelled, linked.hold, "hold was cancelled so the payer is refunded");
 });

@@ -14,7 +14,7 @@ if (!secret?.startsWith("0x")) {
   process.exit(1);
 }
 
-const { hold, leg } = dualSha256(secret);
+const { hold, merchantPaymentHash } = dualSha256(secret);
 
 function hexToBytes(hex) {
   const h = hex.slice(2);
@@ -22,15 +22,15 @@ function hexToBytes(hex) {
 }
 
 const [holdHi, holdLo] = hashToLimbSignals(hold);
-const [legHi, legLo] = hashToLimbSignals(leg);
+const [merchantHashHi, merchantHashLo] = hashToLimbSignals(merchantPaymentHash);
 
 const out = {
   secret: hexToBytes(secret),
   hold_hi: holdHi,
   hold_lo: holdLo,
-  leg_hi: legHi,
-  leg_lo: legLo,
+  merchant_hash_hi: merchantHashHi,
+  merchant_hash_lo: merchantHashLo,
 };
 
 console.log(JSON.stringify(out, null, 2));
-console.error(`publicSignals: [${[holdHi, holdLo, legHi, legLo].join(",")}]`);
+console.error(`publicSignals: [${[holdHi, holdLo, merchantHashHi, merchantHashLo].join(",")}]`);

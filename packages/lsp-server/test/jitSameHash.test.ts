@@ -39,8 +39,8 @@ function req(over: Partial<CreateJitOrderRequest> = {}): CreateJitOrderRequest {
     asset: RUSD,
     mode: "same_hash",
     hold_hash: link.hash,
-    leg_hash: link.hash,
-    merchant_invoice: "fibt_leg",
+    merchant_payment_hash: link.hash,
+    merchant_invoice: "fibt_merchant",
     amount: "100000000",
     ...over,
   };
@@ -82,7 +82,7 @@ function makeHoldNode(over: { paymentPreimage?: string } = {}) {
   return { fetchImpl, calls, captured };
 }
 
-/** The paying node: funds the JIT channel and pays the merchant leg. It never holds. */
+/** The paying node: funds the JIT channel and pays the merchant invoice. It never holds. */
 function makePayNode(over: { paymentPreimage?: string } = {}) {
   let opened = false;
   const calls: string[] = [];
@@ -163,7 +163,7 @@ function makeService(opts: { linked?: boolean; twoNode?: boolean; payPreimage?: 
   return { svc, hold, pay };
 }
 
-test("same_hash JIT settles the hold with the leg preimage itself — no proof anywhere", async () => {
+test("same_hash JIT settles the hold with the merchant preimage itself — no proof anywhere", async () => {
   const { svc, hold, pay } = makeService({ linked: false });
 
   assert.deepEqual(svc.modes, ["same_hash"]);
@@ -174,9 +174,9 @@ test("same_hash JIT settles the hold with the leg preimage itself — no proof a
   const settled = await svc.run(order.jit_order_id);
   assert.equal(settled.state, "settled");
 
-  // The hold settles with S, the very preimage the merchant used on its own leg.
+  // The hold settles with S, the very preimage the merchant used for its own invoice.
   assert.equal(hold.captured.settled, `${link.hash}:${link.preimage}`);
-  assert.equal(pay.captured.sentInvoice, "fibt_leg");
+  assert.equal(pay.captured.sentInvoice, "fibt_merchant");
 });
 
 test("same_hash puts the channel open and the merchant payment on the paying node, the hold on the other", async () => {
@@ -184,9 +184,9 @@ test("same_hash puts the channel open and the merchant payment on the paying nod
   await svc.run((await svc.createOrder(req())).jit_order_id);
 
   assert.ok(pay.calls.includes("open_channel"), "paying node must fund the channel");
-  assert.ok(pay.calls.includes("send_payment"), "paying node must pay the merchant leg");
+  assert.ok(pay.calls.includes("send_payment"), "paying node must pay the merchant invoice");
   assert.ok(!hold.calls.includes("open_channel"), "hold node must not open the channel");
-  assert.ok(!hold.calls.includes("send_payment"), "hold node must not pay the merchant leg");
+  assert.ok(!hold.calls.includes("send_payment"), "hold node must not pay the merchant invoice");
 
   assert.ok(hold.calls.includes("new_invoice"), "hold node must mint the hold invoice");
   assert.ok(hold.calls.includes("settle_invoice"), "hold node must settle the hold invoice");

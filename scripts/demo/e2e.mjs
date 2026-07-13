@@ -128,7 +128,7 @@ ok(`rent streamed: 3 periods × ${cfg.fmt(lease.rent())} = ${cfg.fmt(lease.total
 // ── 4) LSP accounting + capital reclaim (A2 + A1) ──
 // The paying node is the LSP's own node under `linked`, or the separate pay node under `same_hash`.
 const ledger = await new LspLedger(payRpc ?? lspRpc).summary();
-assert.ok(ledger.succeeded >= 1, "the LSP node should have at least the forwarded leg on its ledger");
+assert.ok(ledger.succeeded >= 1, "the LSP node should have at least the merchant payment on its ledger");
 assert.ok(ledger.by_asset.length >= 1);
 ok(`LSP ledger reconciles ${ledger.succeeded} sent payment(s) across ${ledger.by_asset.length} asset(s)`);
 

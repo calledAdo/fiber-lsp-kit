@@ -84,7 +84,7 @@ Other scripts: `npm run build` · `npm test` (offline tests over the real RPC co
 - **Two JIT modes; the LSP advertises which it serves.** One FNN node cannot hold `invoice(H)` and also pay
   `invoice(H)` — it silently pays out and drops the hold (see
   [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) #5). So:
-  **`same_hash`** gives the LSP a second node — one holds, one pays — and both legs carry one hash. There is
+  **`same_hash`** gives the LSP a second node — one holds, one pays — and both invoices carry one hash. There is
   nothing to prove: **no proving key, no circuit, no trusted setup**, and the merchant ships a single `sha256`.
   **`linked`** is for a single-node LSP: the two hashes must differ, so the merchant proves in zero knowledge
   that they share a secret (Groth16), which costs it a ~19 MB one-time artifact download (proving key + circuit,

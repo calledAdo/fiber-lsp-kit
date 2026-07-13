@@ -2,7 +2,7 @@
 
 Fiber LSP Kit ships a working protocol, reference server, and client SDK — including the **streaming lease**
 (rent in the channel asset out of revenue) and **atomic JIT channels** (hold-invoice provisioning, one merchant
-secret linking the customer hold and merchant leg invoice hashes). What's here is honest about being a reference implementation; below
+secret linking the customer hold and merchant invoice hashes). What's here is honest about being a reference implementation; below
 is the path toward something node operators could run in production.
 
 ## Near term
@@ -15,7 +15,7 @@ is the path toward something node operators could run in production.
   coordination cost, no runtime cost. See [`docs/CEREMONY.md`](./docs/CEREMONY.md).
   An LSP that runs a second FNN node can serve **`same_hash`** instead and skip all of it: there is no proof, so
   there is no setup. **PTLCs** would delete the SNARK from `linked` too.
-- **A `same_hash` LSP that does not depend on the merchant revealing.** The paying node learns the leg preimage
+- **A `same_hash` LSP that does not depend on the merchant revealing.** The paying node learns the merchant preimage
   from the TLC fulfilment, but FNN's `get_payment` does not expose it
   ([finding #4](./docs/upstream-fiber-findings.md)), so the LSP settles from the merchant's `reveal`. A merchant
   that takes the forward and never reveals costs the LSP the forwarded amount. This is true of both JIT modes

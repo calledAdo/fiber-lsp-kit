@@ -7,7 +7,7 @@
  *   - DirectReceive — issue over inbound you already have, or top it up first via an injected `ensureInbound`
  *     hook (e.g. `buyInboundFromLsp`). The customer pays a normal invoice on the merchant's own node.
  *   - JitReceive    — no inbound is provisioned ahead of time; the channel opens *on* the paying transaction
- *     via the LSP's hold/leg linkage. The customer pays the LSP's hold invoice.
+ *     via the LSP's hold-to-merchant-invoice linkage. The customer pays the LSP's hold invoice.
  *
  * Both `originate()` a {@link ReceiveHandle}: the payable invoice plus a uniform `awaitSettlement()` that
  * resolves to the same {@link Receipt} shape, so callers (or `MerchantCheckout`, or `autoStrategy`) can swap
@@ -226,7 +226,9 @@ function jitStateOutcome(state: string): SettlementOutcome {
 }
 
 function jitErrorOutcome(code?: string): SettlementOutcome {
-  if (code === "order_refunded" || code === "leg_cancelled") return { status: "Cancelled", paid: false };
-  if (code === "order_expired" || code === "leg_expired") return { status: "Expired", paid: false };
+  if (code === "order_refunded" || code === "merchant_invoice_cancelled") {
+    return { status: "Cancelled", paid: false };
+  }
+  if (code === "order_expired" || code === "merchant_invoice_expired") return { status: "Expired", paid: false };
   return { status: "Open", paid: false }; // timeout / unknown: non-terminal, no webhook fires
 }

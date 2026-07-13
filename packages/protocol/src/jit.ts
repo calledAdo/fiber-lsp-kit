@@ -5,14 +5,14 @@
  *
  * The two modes differ only in how many nodes the LSP runs, and therefore in what the merchant must ship.
  *
- * `linked` — one LSP node. A single node cannot hold invoice(H) and also pay invoice(H), so the two legs need
- * distinct hashes linked by one secret, and the merchant must prove the link in zero knowledge before the LSP
- * commits capital (see `linkageDualSha256.ts`):
+ * `linked` — one LSP node. A single node cannot hold invoice(H) and also pay invoice(H), so the customer and
+ * merchant payments need distinct hashes linked by one secret. The merchant must prove the link in zero
+ * knowledge before the LSP commits capital (see `linkageDualSha256.ts`):
  *
- *   leg_hash  = sha256(S)                     -- merchant leg invoice; preimage is S (32 bytes)
- *   hold_hash = sha256(poseidon(S))           -- customer hold invoice; preimage is poseidon(S)
+ *   merchant_payment_hash = sha256(S)           -- merchant invoice; preimage is S (32 bytes)
+ *   hold_hash = sha256(poseidon(S))             -- customer hold invoice; preimage is poseidon(S)
  *
- * `same_hash` — two LSP nodes: one holds, one pays. The collision is gone, both legs carry sha256(S), and no
+ * `same_hash` — two LSP nodes: one holds, one pays. The collision is gone, both invoices carry sha256(S), and no
  * proof exists to generate or verify (see `sameHash.ts`). The merchant ships nothing but a `sha256`.
  */
 import type { LinkageProof } from "./linkage.js";
@@ -22,7 +22,7 @@ import type { Asset } from "./types.js";
  * How an LSP runs JIT. Advertised in `JitTerms.modes`; chosen per order in `CreateJitOrderRequest.mode`.
  *
  * - `linked`    — one LSP node; distinct hashes; merchant supplies a zero-knowledge linkage proof.
- * - `same_hash` — two LSP nodes (hold + pay); one hash on both legs; no proof, no proving key, no ceremony.
+ * - `same_hash` — two LSP nodes (hold + pay); one hash on both invoices; no proof or ceremony.
  */
 export type JitMode = "linked" | "same_hash";
 
@@ -31,7 +31,7 @@ export type JitOrderState =
   | "created" // intent registered, hold invoice issued
   | "payment_held" // payer's funds locked at the LSP node; channel open triggered
   | "opening" // open_channel in flight
-  | "forwarding" // channel ready; LSP paying the merchant leg
+  | "forwarding" // channel ready; LSP paying the merchant invoice
   | "settled" // merchant paid, inbound hold settled
   | "refunded" // a step failed; hold cancelled, payer refunded
   | "expired"; // hold invoice expired unpaid
@@ -52,11 +52,11 @@ export interface CreateJitOrderRequest {
   mode?: JitMode;
   /** The customer-facing hold invoice hash: sha256(poseidon(S)) under `linked`, sha256(S) under `same_hash`. */
   hold_hash: string;
-  /** sha256(S) -- must equal the merchant leg invoice's payment_hash. Equals `hold_hash` under `same_hash`. */
-  leg_hash: string;
-  /** The merchant's leg invoice: net amount, hash = leg_hash. */
+  /** sha256(S) -- must equal the merchant invoice's payment_hash. Equals `hold_hash` under `same_hash`. */
+  merchant_payment_hash: string;
+  /** The merchant invoice: net amount, hash = merchant_payment_hash. */
   merchant_invoice: string;
-  /** Proof that hold_hash and leg_hash are linked by one secret S. Required by `linked`; absent for `same_hash`. */
+  /** Proof that hold_hash and merchant_payment_hash are linked by one secret S. Required by `linked`; absent for `same_hash`. */
   linkage_proof?: LinkageProof;
   /** Gross amount the payer will pay, in the asset's base unit. */
   amount: string;

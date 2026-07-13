@@ -22,9 +22,9 @@
  *
  *   `same_hash` (two nodes, no proof)
  *   JIT_PAY_FIBER_RPC_URL — a SECOND FNN node the LSP controls, which opens the JIT channel and pays the
- *                        merchant leg while FIBER_RPC_URL holds the customer payment. It needs on-chain funds
+ *                        merchant invoice while FIBER_RPC_URL holds the customer payment. It needs on-chain funds
  *                        (it is the channel funder) and nothing else. Because the hold and the payment live on
- *                        different nodes, both legs can carry the same hash: no proving key, no circuit, no
+ *                        different nodes, both invoices can carry the same hash: no proving key, no circuit, no
  *                        ceremony. Startup refuses if it resolves to the same node as FIBER_RPC_URL.
  *
  *   JIT_STORE_PATH    — persist JIT orders + revealed preimages (survives restart); unset ⇒ in-memory.
@@ -107,7 +107,7 @@ function logJitEvent({ event, order }: { event: string; order: { jit_order_id: s
       : event === "opening"
         ? `customer payment held → opening a channel to the merchant…`
         : event === "forwarding"
-          ? `channel open (${order.channel_outpoint ?? "?"}) → forwarding the merchant leg…`
+          ? `channel open (${order.channel_outpoint ?? "?"}) → forwarding the merchant invoice…`
           : event === "settled"
             ? `SETTLED ✓ — merchant paid, then the customer's hold released`
             : event === "refunded"

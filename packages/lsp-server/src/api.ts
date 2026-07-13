@@ -9,7 +9,7 @@
  *   POST /lsp/v1/orders/:id/settle       → notify the LSP a prepaid fee was paid (triggers provisioning)
  *   POST /lsp/v1/jit/orders              → register a linked JIT intent (body: CreateJitOrderRequest) → hold invoice
  *   GET  /lsp/v1/jit/orders/:id          → a JIT order's current state
- *   POST /lsp/v1/jit/orders/:id/reveal   → merchant reveals the leg preimage (body: { preimage }) → settle
+ *   POST /lsp/v1/jit/orders/:id/reveal   → merchant reveals the invoice preimage (body: { preimage }) → settle
  *   POST /lsp/v1/jit/orders/:id/cancel
  */
 import type { CreateJitOrderRequest, CreateOrderRequest } from "@fiberlsp/protocol";

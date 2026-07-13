@@ -155,7 +155,7 @@ export function makeNode(world, role, port) {
         }
         const inv = world.invoices.get(p0.invoice);
         if (!inv) return { status: "Failed" };
-        if (inv.preimage) { // a normal/leg invoice: the payer learns the preimage — settled now
+        if (inv.preimage) { // a regular merchant invoice: the payer learns the preimage — settled now
           registry[inv.issuer].setStatus(inv.hash, "Paid");
           payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", payment_preimage: inv.preimage, amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: inv.hash, status: "Success" };

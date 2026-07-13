@@ -1,9 +1,9 @@
 /**
  * JitCheckout -- the merchant side of a JIT channel order, in either mode the LSP offers.
  *
- * The customer pays the LSP's hold invoice; the LSP opens a fresh channel to the merchant and pays the leg
- * invoice; settling the leg reveals the secret that settles the hold. The merchant always generates that
- * secret, so the LSP cannot settle before paying.
+ * The customer pays the LSP's hold invoice; the LSP opens a fresh channel to the merchant and pays the
+ * merchant invoice. Settling the merchant invoice reveals the secret that settles the hold. The merchant
+ * always generates that secret, so the LSP cannot settle before paying.
  *
  * `same_hash` — both invoices carry sha256(S). Nothing to prove: no proving key, no wasm, no ceremony.
  *               Requires the LSP to run a separate paying node, which it advertises.
@@ -30,7 +30,7 @@ import type { FiberChannelRpcClient } from "@fiberlsp/fiber";
 import type { LspClient } from "./LspClient.js";
 
 export interface JitCheckoutConfig {
-  /** The merchant's own FNN node; issues the leg invoice and receives the forward. */
+  /** The merchant's own FNN node; issues the merchant invoice and receives the forward. */
   rpc: FiberChannelRpcClient;
   /** Transport to the LSP. Every LSP call this checkout makes goes through it — it does no HTTP of its own. */
   lsp: LspClient;
@@ -42,13 +42,17 @@ export interface JitCheckoutConfig {
   sleep?: (ms: number) => Promise<void>;
   /**
    * Pin the JIT mode. Omit to prefer `same_hash` when the LSP offers it, else `linked`. Pin `linked` only to
-   * keep the customer's hold hash unrelated to the merchant leg's.
+   * keep the customer's hold hash unrelated to the merchant payment hash.
    */
   mode?: JitMode;
-  /** Required by `linked` mode: build a proof linking hold_hash and leg_hash without exposing the secret. */
-  proveLinkage?: (holdHash: string, legHash: string, secretHex: string) => LinkageProof | Promise<LinkageProof>;
-  /** Seconds the leg invoice is set to outlive the LSP hold window (covers the on-chain open). Default 1800. */
-  legExpiryBufferSeconds?: number;
+  /** Required by `linked`: prove that hold_hash and merchant_payment_hash share the hidden secret. */
+  proveLinkage?: (
+    holdHash: string,
+    merchantPaymentHash: string,
+    secretHex: string,
+  ) => LinkageProof | Promise<LinkageProof>;
+  /** Seconds the merchant invoice outlives the LSP hold window. Default 1800. */
+  merchantInvoiceExpiryBufferSeconds?: number;
 }
 
 export interface JitCheckoutRequest {
@@ -129,44 +133,47 @@ export class JitCheckout {
     const mode = this.selectMode(terms);
 
     const secret = "0x" + hex(this.randomBytes(32));
-    // Both modes settle the leg with S itself; they differ only in what the hold hash is, and whether the
+    // Both modes settle the merchant invoice with S; they differ only in the hold hash and whether the
     // relationship between the two hashes has to be proven.
     const link =
       mode === "same_hash"
         ? (() => {
             const l = sameHashLink(secret);
-            return { hold: l.hash, leg: l.hash, legPreimage: l.preimage };
+            return { hold: l.hash, merchantPaymentHash: l.hash, merchantPreimage: l.preimage };
           })()
         : dualSha256(secret);
     const net = jitForwardAmount(terms, req.amount);
 
-    // The leg must outlive the LSP hold (which the LSP may set up to terms.max_expiry_seconds), or it could
+    // The merchant invoice must outlive the LSP hold (up to terms.max_expiry_seconds), or it could
     // expire before the LSP forwards. Give it max_expiry plus slack for the on-chain open, never less.
-    const legExpiry =
-      Math.max(req.expirySeconds ?? 0, terms.max_expiry_seconds) + (this.cfg.legExpiryBufferSeconds ?? 1800);
-    const legInv = await this.cfg.rpc.newInvoice({
+    const merchantInvoiceExpiry =
+      Math.max(req.expirySeconds ?? 0, terms.max_expiry_seconds) + (this.cfg.merchantInvoiceExpiryBufferSeconds ?? 1800);
+    const merchantInvoice = await this.cfg.rpc.newInvoice({
       amount: net,
-      description: req.description ?? "jit checkout (merchant leg)",
+      description: req.description ?? "jit checkout (merchant invoice)",
       udtTypeScript: assetUdtScript(req.asset),
-      expirySeconds: legExpiry,
-      paymentPreimage: link.legPreimage,
+      expirySeconds: merchantInvoiceExpiry,
+      paymentPreimage: link.merchantPreimage,
       hashAlgorithm: "sha256",
     });
-    const legHash = legInv.invoice?.data?.payment_hash;
-    if (!legHash) throw new JitCheckoutError("no_hash", "merchant node returned no payment_hash");
-    if (legHash !== link.leg) {
-      throw new JitCheckoutError("hash_mismatch", "node payment_hash does not match the expected leg hash");
+    const merchantPaymentHash = merchantInvoice.invoice?.data?.payment_hash;
+    if (!merchantPaymentHash) throw new JitCheckoutError("no_hash", "merchant node returned no payment_hash");
+    if (merchantPaymentHash !== link.merchantPaymentHash) {
+      throw new JitCheckoutError(
+        "hash_mismatch",
+        "node payment_hash does not match the expected merchant payment hash",
+      );
     }
 
-    const proof = mode === "linked" ? await this.cfg.proveLinkage!(link.hold, link.leg, secret) : undefined;
+    const proof = mode === "linked" ? await this.cfg.proveLinkage!(link.hold, link.merchantPaymentHash, secret) : undefined;
     const body: CreateJitOrderRequest = {
       target_pubkey: this.cfg.merchantPubkey,
       target_address: this.cfg.merchantAddress,
       asset: req.asset,
       mode,
       hold_hash: link.hold,
-      leg_hash: link.leg,
-      merchant_invoice: legInv.invoice_address,
+      merchant_payment_hash: link.merchantPaymentHash,
+      merchant_invoice: merchantInvoice.invoice_address,
       ...(proof ? { linkage_proof: proof } : {}),
       amount: asBig(req.amount).toString(10),
       ...(req.channelCapacity ? { channel_capacity: asBig(req.channelCapacity).toString(10) } : {}),
@@ -181,12 +188,15 @@ export class JitCheckout {
       const attempts = opts.attempts ?? 300;
       const intervalMs = opts.intervalMs ?? 2000;
       for (let i = 0; i < attempts; i++) {
-        const { status } = await this.cfg.rpc.getInvoice(legHash);
+        const { status } = await this.cfg.rpc.getInvoice(merchantPaymentHash);
         if (status === "Paid") break;
         if (status === "Cancelled" || status === "Expired") {
-          throw new JitCheckoutError("leg_" + status.toLowerCase(), `leg invoice is ${status}`);
+          throw new JitCheckoutError(
+            "merchant_invoice_" + status.toLowerCase(),
+            `merchant invoice is ${status}`,
+          );
         }
-        if (i === attempts - 1) throw new JitCheckoutError("timeout", "leg invoice never paid");
+        if (i === attempts - 1) throw new JitCheckoutError("timeout", "merchant invoice never paid");
         await this.sleep(intervalMs);
       }
 
@@ -199,7 +209,7 @@ export class JitCheckout {
         }
         if (!revealed && current.state === "forwarding") {
           revealed = true;
-          const afterReveal = await this.cfg.lsp.revealJitOrder(order.jit_order_id, link.legPreimage, token);
+          const afterReveal = await this.cfg.lsp.revealJitOrder(order.jit_order_id, link.merchantPreimage, token);
           if (afterReveal.state === "settled") return afterReveal;
         }
         if (i === attempts - 1) throw new JitCheckoutError("timeout", "JIT order never settled");

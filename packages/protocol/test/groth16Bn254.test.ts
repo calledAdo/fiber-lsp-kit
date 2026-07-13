@@ -35,8 +35,8 @@ test("accepts a real proof from the shipped circuit", () => {
 });
 
 test("the fixture's public signals are the limbs of the linked hashes", () => {
-  const { hold, leg } = dualSha256(secret);
-  assert.deepEqual(publicSignals, [...hashToLimbSignals(hold), ...hashToLimbSignals(leg)]);
+  const { hold, merchantPaymentHash } = dualSha256(secret);
+  assert.deepEqual(publicSignals, [...hashToLimbSignals(hold), ...hashToLimbSignals(merchantPaymentHash)]);
 });
 
 test("rejects a tampered public signal", () => {
@@ -114,13 +114,13 @@ test("rejects a non-groth16 protocol tag", () => {
 
 test("the linkage verifier accepts the real proof for its hashes and rejects it for others", () => {
   const verifier = createGroth16DualSha256Verifier({ verificationKey: vk, verifyGroth16: verifyGroth16Bn254 as never });
-  const { hold, leg } = dualSha256(secret);
+  const { hold, merchantPaymentHash } = dualSha256(secret);
   const payload = groth16DualSha256Proof({ proof, publicSignals });
 
-  assert.equal(verifier.verify(hold, leg, payload), true);
+  assert.equal(verifier.verify(hold, merchantPaymentHash, payload), true);
   // Same valid proof, but bound to a different hash pair: the public-signal check must catch it before the
   // pairing ever runs, or an attacker could replay one honest proof against any order.
   const other = dualSha256("0x" + "22".repeat(32));
-  assert.equal(verifier.verify(other.hold, leg, payload), false);
-  assert.equal(verifier.verify(hold, other.leg, payload), false);
+  assert.equal(verifier.verify(other.hold, merchantPaymentHash, payload), false);
+  assert.equal(verifier.verify(hold, other.merchantPaymentHash, payload), false);
 });
