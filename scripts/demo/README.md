@@ -30,7 +30,9 @@ Each scenario has its own `demo.config.json`. Node resolution is atomic:
 
 The LSP launcher starts mock nodes only for a mock profile. For either profile it then performs a read-only
 preflight: node identity, one chain hash, distinct required nodes, customer-to-hold peer connectivity, channel
-state, asset, and customer outbound capacity. It does not fund, connect, or open prerequisite live channels.
+state, asset, and customer outbound capacity. A live profile also arms and closes one paying-node
+`subscribe_store_changes` subscription, proving preimage observation is available before any payment moves.
+It does not fund, connect, or open prerequisite live channels.
 
 ## Multi-terminal runs
 

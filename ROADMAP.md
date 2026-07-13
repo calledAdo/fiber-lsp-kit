@@ -1,10 +1,10 @@
 # Roadmap
 
-Fiber LSP Kit ships a working protocol, reference server, and client SDK — including the **streaming lease**
+Fiber LSP Kit ships a working protocol, composable server-side services, a client SDK, and a runnable example — including the **streaming lease**
 (rent priced per channel from live remaining inbound and paid in the channel asset out of revenue) and
 **atomic JIT channels** (hold-invoice provisioning, one merchant secret linking the customer hold and merchant
-invoice hashes). What's here is honest about being a reference implementation; below is the path toward
-something node operators could run in production.
+invoice hashes). The packages define replaceable interfaces rather than one required deployment architecture;
+below is the path toward production-grade operator compositions.
 
 ## Near term
 
@@ -16,18 +16,18 @@ something node operators could run in production.
   coordination cost, no runtime cost. See [`docs/CEREMONY.md`](./docs/CEREMONY.md).
   An LSP that runs a second FNN node can serve **`same_hash`** instead and skip all of it: there is no proof, so
   there is no setup. **PTLCs** would delete the SNARK from `linked` too.
-- **A `same_hash` LSP that does not depend on the merchant revealing.** The paying node learns the merchant preimage
-  from the TLC fulfilment, but FNN's `get_payment` does not expose it
-  ([finding #4](./docs/upstream-fiber-findings.md)), so the LSP settles from the merchant's `reveal`. A merchant
-  that takes the forward and never reveals costs the LSP the forwarded amount. This is true of both JIT modes
-  and is fixed upstream, not here.
+- **Replayable preimage recovery.** Normal JIT settlement no longer depends on a merchant call: an optional
+  `PaymentPreimageSource` captures FNN rc5's live `PutPreimage` event before the LSP forwards. The remaining
+  upstream gap is crash recovery: `get_payment` omits the durable preimage and the event stream has no replay
+  ([finding #4](./docs/upstream-fiber-findings.md)). Until FNN adds a read/replay surface, `/reveal` remains an
+  explicit recovery fallback rather than part of `settle()`.
 - **Escrowed activation bond (prepaid path).** The optional pay-before-open purchase flow is trusted by
   construction — nothing binds the client's fee to a channel actually being opened, and verifying the fee
   on-chain does not change that. A CKB lock script escrowing the activation, claimable by the LSP only against a
   live funding cell, is the real fix. (JIT needs none of this: the fee is netted from the first forwarded
   payment.)
 - **Persistence hardening.** The file-backed stores survive restarts (orders, invoice watches, JIT orders +
-  revealed preimages), and the reference server already calls `JitService.resume()` and
+  captured preimages), and the reference example calls `JitService.resume()` and
   `InvoiceWebhookService.resume()` at startup. Move to SQLite/Postgres behind the existing store interfaces,
   with order expiry sweeping.
 - **Operator surface.** Optional merchant identity and capability authentication ships in `@fiberlsp/auth` and
@@ -67,5 +67,5 @@ those makes the provisioning path more robust for every LSP, not just this one.
 
 ## Continuation
 
-The intent is to take the reference server to a production-grade, operator-runnable LSP — the piece the Fiber
-ecosystem needs before wallets can offer one-tap "receive any asset."
+The intent is to harden these interfaces and service bricks so operators can assemble production LSPs around
+their own storage, authentication, policy, observability, and server framework.

@@ -6,11 +6,11 @@
 
 A fresh wallet on Fiber can't *receive* a payment: it has no inbound channel capacity — and on Fiber that's
 **per-asset**, so to accept **RUSD** you need RUSD inbound specifically. **Fiber LSP Kit** is the missing
-**Liquidity Service Provider (LSP)** + **merchant back-office** layer that fixes this: a protocol, a reference
-server, and a wallet SDK to **buy per-asset inbound**, then **invoice → get paid → reconcile** on top of it.
+**Liquidity Service Provider (LSP)** + **merchant back-office** layer that fixes this: a protocol, composable
+server-side services, and a wallet SDK to **buy per-asset inbound**, then **invoice → get paid → reconcile** on top of it.
 
-It is **infrastructure, not an app** — the **LSPS-Fiber** protocol is the product; the server is one
-conforming implementation.
+It is **infrastructure, not an app** — the **LSPS-Fiber** protocol and replaceable service bricks are the
+product; [`examples/reference-lsp/`](./examples/reference-lsp) is only one conforming assembly.
 
 | Where to look | For |
 |---|---|
@@ -33,10 +33,10 @@ provisioning, plus the merchant tooling to run on it, is this kit.**
 | Package | What it is |
 |---|---|
 | `@fiberlsp/protocol` | The LSPS-Fiber contract layer: assets, order/JIT/lease/receipt types, fee/rent math, and linkage proof contracts. |
-| `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
+| `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, channel opening, and optional paying-node preimage observation. |
 | `@fiberlsp/auth` | Optional merchant-authentication bricks: signed Fiber-invoice identity proofs, scoped Ed25519 capability tokens, policy/challenge stores, and `createApi` middleware. Off by default. |
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
-| `@fiberlsp/server` | Reference LSP engine + REST API, `JitService` in both `linked` and `same_hash` modes, and server-side merchant invoice-webhook service. |
+| `@fiberlsp/server` | Composable server-side bricks: `JitService`, prepaid liquidity, lease/rebalancing helpers, injectable stores, and framework-neutral REST handlers. It starts no process and reads no environment variables. |
 | `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: in-process witness generation + a bundled WebAssembly prover (pure `npm i`, no binary), with an optional native-subprocess backend for speed. Not needed for `same_hash`. |
 | `@fiberlsp/client` | Wallet/merchant SDK: provider discovery re-exports, quote comparison, inbound purchase, invoice checkout, JIT checkout, streaming rent, monitoring, and ledger helpers. |
 | `registry/providers.json` | Git-hosted provider registry file; providers can be added by PR, and merchants can download or bundle it. |
@@ -64,8 +64,13 @@ its `demo.config.json`. A complete node profile runs live; if any required node 
 uses that scenario's mock network. Startup performs only read-only topology checks and never opens the
 customer's prerequisite channel for a live operator.
 
-Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
-+ merchant REST API, needs an FNN node).
+Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run example:lsp`
+(one runnable Node HTTP composition from [`examples/reference-lsp/`](./examples/reference-lsp), requiring an FNN
+node). Applications normally import the packages and inject their own clients, stores, observers, policy, and
+HTTP framework; the example's environment variables are not part of the package APIs.
+
+Live integration was verified against Fiber's official **`v0.9.0-rc5` prerelease**, not final `v0.9.0` and not
+the latest stable release (`v0.8.1`). Re-check RPC behavior when changing FNN versions.
 
 ## How it works
 
@@ -134,8 +139,8 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 | Feature | Status | Evidence | Live / mock | Limitation |
 |---|---|---|---|---|
-| `linked` JIT checkout | Implemented | `npm run demo:linked:e2e`; [`jit.test.ts`](./packages/lsp-server/test/jit.test.ts) | Reproducible mock demo; same package/RPC path verified on testnet | On-chain confirmation latency; shipped Groth16 phase 2 is development-only; merchant reveal fallback remains. |
-| `same_hash` JIT checkout | Implemented | `npm run demo:same-hash:e2e`; [`jitSameHash.test.ts`](./packages/lsp-server/test/jitSameHash.test.ts); [finding #5](./docs/upstream-fiber-findings.md) | Reproducible mock demo; two-node hash behavior verified on testnet | Requires two LSP nodes and durable operational handoff; merchant reveal fallback remains. |
+| `linked` JIT checkout | Implemented | `npm run demo:linked:e2e`; [`jit.test.ts`](./packages/lsp-server/test/jit.test.ts) | Reproducible mock demo; same package/RPC path verified on testnet | On-chain confirmation latency; shipped Groth16 phase 2 is development-only; rc5 preimage observation is live-only, with explicit reveal recovery. |
+| `same_hash` JIT checkout | Implemented | `npm run demo:same-hash:e2e`; [`jitSameHash.test.ts`](./packages/lsp-server/test/jitSameHash.test.ts); [finding #5](./docs/upstream-fiber-findings.md) | Reproducible mock demo; two-node hash behavior verified on testnet | Requires two LSP nodes; rc5 preimage observation has no replay, so durable upstream lookup is still needed. |
 | Channel-bound streaming rent | Implemented | Both JIT demos; [`streamingLease.test.ts`](./packages/client/test/streamingLease.test.ts) | Mock demos plus live RUSD keysend verification | LSP-side lapse enforcement is not implemented. |
 | Prepaid inbound provisioning | Reference implementation | [`client.test.ts`](./packages/client/test/client.test.ts); [`lsp.test.ts`](./packages/lsp-server/test/lsp.test.ts) | Scripted RPC tests; not part of the focused JIT demos | Pay-before-open trust gap; the demo-only `LSP_TRUST_SETTLE=1` bypass must not be used in production. |
 | Registry + graph discovery | Implemented | [`registry.test.ts`](./packages/registry/test/registry.test.ts); [`discover.test.ts`](./packages/client/test/discover.test.ts) | Static registry and scripted graph tests; graph propagation behavior measured live | Newly announced node capabilities can propagate slowly; registry remains the dependable endpoint source. |
@@ -144,8 +149,8 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 | LSP ledger + circular rebalancing | Operational helpers | [`leaseAndLedger.test.ts`](./packages/lsp-server/test/leaseAndLedger.test.ts); [`rebalance.test.ts`](./packages/lsp-server/test/rebalance.test.ts); [`scripts/live-features.mjs`](./scripts/live-features.mjs) | Ledger read and routing RPCs probed live; rebalance submission is dry-run by default | FNN currently omits per-payment amount; a circular route must exist in the live graph. |
 | Cooperative lease close | Operational helper | [`leaseAndLedger.test.ts`](./packages/lsp-server/test/leaseAndLedger.test.ts); gated live check in [`scripts/live-features.mjs`](./scripts/live-features.mjs) | Scripted tests; live close is opt-in because it is irreversible | No automatic LSP-side close after lease lapse. |
 
-Production work remains: a trustworthy multi-party phase 2 for `linked` (or PTLCs), upstream payment-preimage
-exposure, production key/policy management and rate limiting around the optional auth middleware, native LSP
+Production work remains: a trustworthy multi-party phase 2 for `linked` (or PTLCs), replayable upstream payment-preimage
+lookup, production key/policy management and rate limiting around the optional auth middleware, native LSP
 capability advertisement, an escrowed prepaid activation bond, and upstream interception + zero-conf support
 for sub-second unarranged JIT. See [`ROADMAP.md`](./ROADMAP.md).
 

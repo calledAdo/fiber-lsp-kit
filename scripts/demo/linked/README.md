@@ -45,7 +45,10 @@ Before startup, the operator must ensure:
 - all three FNN nodes are distinct and on the same chain;
 - the customer is connected to the LSP and has a ready RUSD channel with enough local balance to pay;
 - the LSP node has the CKB and RUSD capital needed to open the requested merchant channel;
+- the LSP node enables FNN's `pubsub` RPC module (`RPC_ENABLED_MODULES` must retain the normal modules and add
+  `pubsub`), with RPC bound privately; this is how the LSP captures the merchant preimage without a reveal call;
 - the merchant's configured P2P listener is reachable by the LSP.
 
-The launcher validates identity, network, and the customer channel without moving funds. `JitService`
+The launcher validates identity, network, the customer channel, and the preimage subscription without moving
+funds. `JitService`
 establishes the LSP-to-merchant peer session when needed before opening the channel.

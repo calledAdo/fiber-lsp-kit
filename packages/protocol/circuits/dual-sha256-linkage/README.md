@@ -127,7 +127,8 @@ Post the proof to the LSP as:
 }
 ```
 
-Set `LINKED_JIT_VK_PATH=build/verification_key.json` on the reference server to enable verification.
+The repository example accepts `LINKED_JIT_VK_PATH=build/verification_key.json`; package users inject the
+resulting linkage verifier directly into `JitService`.
 
 ## Public signals
 

@@ -106,21 +106,25 @@ graph capability with registry endpoints today and would collapse onto the graph
 
 ## 4. `get_payment` does not expose the settled payment's preimage
 
-**Severity:** low (missing surface; forces protocol workarounds)
+**Severity:** medium (durable value exists but has no replayable/readable RPC surface)
 
 **What happens.** When an outgoing payment settles, the paying node cryptographically *learns the
 preimage* (the TLC fulfillment carries it), but `get_payment` returns only
 `{ payment_hash, status, created_at, last_updated_at, failed_error, fee, custom_records, routers }` — the
-preimage is in the node's store yet unreachable over RPC. (Still absent on the `develop` RPC README as of
-2026-07-10; the `routers` field has since been added, so the surface is being extended — just not with the
-preimage.)
+preimage is in the node's store but absent from every payment read RPC. FNN `v0.9.0-rc5` does have an opt-in
+WebSocket `subscribe_store_changes` method: it emits `PutPreimage { payment_hash, payment_preimage }` live.
+That module is disabled by default and has no cursor, history, or replay. A fresh subscriber receives no event
+for an already-settled payment, even though the preimage remains durable in the node store.
 
 **Why it matters.** Hold-invoice choreography (LSPS2-style JIT, submarine-swap-like flows) needs the
 forwarder to *relay* the preimage: node B pays `invoice(H)`, learns `P`, and a coordinating process calls
-`settle_invoice(H, P)` on node A. Today `P` must be re-supplied out-of-band by the payee even though B
-already holds it — an extra round-trip and a needless trust discussion.
+`settle_invoice(H, P)` on node A. A process can capture `P` from the live store-change stream if it subscribes
+before paying, but a disconnect between node persistence and application persistence cannot be repaired. An
+out-of-band payee reveal is still needed for that failure window.
 
-**Ask.** Add `payment_preimage` (present when `status == "Success"`) to `GetPaymentCommandResult`.
+**Ask.** Add `payment_preimage` (present when `status == "Success"`) to `GetPaymentCommandResult`, or expose an
+authenticated `get_preimage(payment_hash)` read. Either closes the restart/disconnect gap while retaining
+`subscribe_store_changes` for low-latency delivery.
 
 ---
 

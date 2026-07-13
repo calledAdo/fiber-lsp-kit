@@ -1,8 +1,8 @@
 # Architecture
 
-Fiber LSP Kit is a **protocol plus a reference implementation** for renting per-asset inbound liquidity on
-Fiber. The reusable contract is **LSPS-Fiber**; the server and client SDK are one conforming implementation of
-it.
+Fiber LSP Kit is a **protocol plus composable implementation bricks** for renting per-asset inbound liquidity
+on Fiber. The reusable contract is **LSPS-Fiber**; operators choose which server-side services, adapters, stores,
+and client SDK helpers to assemble around it.
 
 This document is an argument, not a catalogue. It runs in one line from a single fact about how Fiber channels
 fund, through the provisioning path that fact forces, the pricing that path implies, the mechanism that
@@ -33,7 +33,7 @@ You can only *receive* a Fiber payment over **inbound capacity** — capacity so
 On Fiber that capacity is **per-asset**: RUSD inbound is a different thing from CKB inbound, and having one
 grants you none of the other.
 
-How that capacity comes into being is fixed by FNN's `open_channel`, established against FNN v0.9 source
+How that capacity comes into being is fixed by FNN's `open_channel`, established against FNN v0.9.0-rc5 prerelease source
 (`crates/fiber-json-types`, `crates/fiber-lib/src/fiber/network.rs`):
 
 ```text
@@ -111,7 +111,7 @@ Because of where the trust ends up.
 |---|---|---|
 | Merchant | **trusts the LSP** with a fee, before any channel exists | trusts nothing — is paid before the LSP can settle |
 | Customer | not involved | trusts nothing — the held payment either delivers or refunds |
-| LSP | trusts nothing | `linked`: proof soundness; `same_hash`: two-node operational handoff; both currently rely on the merchant reveal fallback (see [Trust model](#trust-model)) |
+| LSP | trusts nothing | `linked`: proof soundness; `same_hash`: two-node operational handoff; both normally capture the preimage from the paying node, with an explicit merchant recovery fallback if rc5's live-only stream is lost |
 
 Prepaid places the risk on the **least sophisticated, least capitalised party**: a cold-start merchant. JIT
 moves all residual trust onto the **LSP** — the party with capital, expertise, and a repeated game, risking its
@@ -188,11 +188,12 @@ channel, or payment lifecycle events. The kit therefore still discovers those tr
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, channel-opening helpers. | `protocol` |
 | `@fiberlsp/auth` | Optional merchant identity proof, scoped Ed25519 capabilities, policy/challenge stores, and composable API middleware. Authentication remains off unless the operator mounts it. | `protocol`, `fiber` |
 | `@fiberlsp/registry` | Static provider registry + gossip-graph discovery, merged by pubkey. | `protocol`, `fiber` |
-| `@fiberlsp/server` | Reference LSP engine + REST API, JIT service (`linked` and `same_hash`), invoice-webhook service, injectable stores. | `protocol`, `fiber` |
+| `@fiberlsp/server` | Composable LSP services, framework-neutral REST handlers, JIT modes, invoice webhooks, and injectable stores. It starts no process and reads no environment variables. | `protocol`, `fiber` |
 | `@fiberlsp/client` | Merchant/wallet SDK: discovery, quote comparison, inbound purchase, invoice checkout, JIT checkout, payment watching, streaming rent, ledger. | `protocol`, `fiber`, `registry` |
 | `@fiberlsp/prover-linked` | Merchant-side proof generation for `linked` JIT. Not needed for `same_hash`. | `protocol` |
 
-A wallet or competing LSP can depend on `protocol` (and `fiber`) alone and ignore the reference server.
+An operator composes only the bricks it needs. [`examples/reference-lsp/server.mjs`](../examples/reference-lsp/server.mjs)
+is one runnable Node HTTP composition, not a package-owned deployment architecture.
 
 ### The LSPS-Fiber protocol
 
@@ -208,7 +209,7 @@ both to the hex so the same asset compares equal regardless of source.
 | `GET /lsp/v1/info` | Provider identity, supported assets, fee modes, lease terms, JIT terms (including `jit.modes`). |
 | `GET /lsp/v1/liquidity` | Live capacity snapshot per asset — the data behind a liquidity dashboard. |
 | `POST /lsp/v1/jit/orders` · `GET :id` | Create a JIT order (returns a customer hold invoice) / read it. |
-| `POST /lsp/v1/jit/orders/:id/reveal` · `/cancel` | Fallback preimage reveal / cancel before capital is committed. |
+| `POST /lsp/v1/jit/orders/:id/reveal` · `/cancel` | Explicit lost-observation recovery / cancel before capital is committed. Normal settlement does not call `reveal`. |
 | `POST /lsp/v1/orders` · `GET :id` · `POST :id/settle` | Optional prepaid purchase: create / read / confirm fee → provision. |
 | `/merchant/v1/*` | Optional reference invoice + webhook API, mounted when `MERCHANT_FIBER_RPC_URL` is set. |
 
@@ -254,7 +255,7 @@ The merchant generates a 32-byte secret `S` and never shares it. Everything else
       │                         │────── 4. open_channel ──────▶│   on-chain. minutes.
       │                         │                              │
       │                         │─ 5. pay merchant invoice ───▶│   merchant claims,
-      │                         │◀──────── preimage S ─────────│   revealing S
+      │                         │◀─ paying node learns S ──────│   and emits PutPreimage
       │                         │
       │                         │   6. settle the hold with S. The LSP keeps the gross.
       │                         │
@@ -340,10 +341,11 @@ hash = sha256(S)     (both the customer hold invoice and merchant invoice; preim
 ```
 
 The **hold node** mints the customer's hold invoice on `hash`. The **paying node** funds the JIT channel and pays
-the merchant invoice, which carries the same `hash`. The merchant claims, revealing `S` to the paying node;
-the LSP settles the hold with `S`. There is nothing to prove because there is no relation between two hashes —
-there is one hash. `JIT_PAY_FIBER_RPC_URL` names the paying node, and the server refuses to start if it resolves
-to the same node as the hold one.
+the merchant invoice, which carries the same `hash`. The merchant claims, revealing `S` to the paying node; the
+LSP's preimage source captures that node event and settles the hold with `S`. There is nothing to prove because
+there is no relation between two hashes — there is one hash. A deployment enables this mode by supplying a
+distinct `payRpc` to `JitService`. The repository example maps `JIT_PAY_FIBER_RPC_URL` to that dependency and
+refuses to start if it resolves to the hold node; custom compositions must enforce the same invariant.
 
 The merchant still generates `S`, so the ordering argument from [How a JIT checkout runs](#how-a-jit-checkout-runs)
 is untouched. The paying node is cheap: it pays the merchant over the channel it has just funded, a single direct
@@ -397,12 +399,12 @@ timer is checked against the money-flow rather than assumed. All of this is shar
   `JitService.resume()` re-drives any order left in flight by a crash — including one already `forwarding`. This
   requires a persistent `JIT_STORE_PATH`; with the in-memory store a crash leaves a held payment to refund at
   expiry.
-- **Where the merchant preimage comes from.** The paying node learns it from the TLC fulfillment, but FNN's
-  `get_payment` does not expose it ([finding #4](./upstream-fiber-findings.md)). So today the LSP settles from
-  the merchant's `reveal` call, and reads `get_payment` first only so it will settle without one once FNN
-  surfaces the field. **This bounds what JIT guarantees:** a merchant that takes the forward and never reveals
-  costs the LSP the forwarded amount. The customer is still refunded at expiry, and neither the proof nor the
-  node topology changes this. Fixing #4 upstream closes it.
+- **Where the merchant preimage comes from.** The paying node learns it from the TLC fulfillment. FNN
+  `v0.9.0-rc5` omits it from `get_payment`, but its opt-in `subscribe_store_changes` stream emits
+  `PutPreimage` ([finding #4](./upstream-fiber-findings.md)). `PaymentPreimageSource` is armed before
+  `send_payment`; a valid event is persisted before the hold settles. The stream has no replay, so an LSP
+  process disconnected at exactly the wrong time cannot recover that durable node value through RPC. The
+  authenticated `/reveal` endpoint remains explicit recovery for that failure, not the normal merchant flow.
 
 ## Trust model
 
@@ -411,9 +413,9 @@ exposure, and it differs sharply between them.
 
 **Under `same_hash` no cryptographic proof assumption remains.** There is no proof system, proving key, or setup,
 which is why the mode is preferred. Operational exposure remains: the LSP application must durably coordinate
-the hold and paying nodes, and current FNN payment results do not expose the settled preimage. Until that changes,
-the LSP still depends on the merchant's post-payment reveal; a crash without persistent state, or a merchant that
-withholds the reveal, leaves the hold to refund at expiry after the LSP has forwarded value.
+the hold and paying nodes. Normal settlement does not trust the merchant because the LSP observes the paying
+node directly. FNN rc5's stream is live-only, however; a disconnect between node persistence and application
+persistence still needs explicit merchant recovery or a future replayable upstream lookup.
 
 **Under `linked` the LSP is exposed to the soundness of the linkage proof.** A forged proof for two *unlinked*
 hashes makes the LSP open a channel, pay the merchant invoice, and then fail to settle the customer hold: a direct
@@ -616,25 +618,32 @@ const lsp = new LspClient({ baseUrl: "https://lsp.example" });
 const checkout = new JitCheckout({ rpc: merchantRpc, lsp, merchantPubkey, merchantAddress, proveLinkage });
 const session = await checkout.checkout({ asset: RUSD, amount: "300000000", expirySeconds: 1800 });
 console.log(session.invoice);            // show to the customer
-const final = await session.settle();    // waits for merchant payment, reveals if needed
+const final = await session.settle();    // waits for the LSP to observe the payment and settle
 ```
 
 `session` carries `mode`, `invoice` (the customer hold invoice), `paymentHash` (the hold hash), `netAmount`,
-`fee`, `settle()`, and `cancel()`. `proveLinkage` is required only under `linked`; omit it and the client
+`fee`, `settle()`, `revealFallback()`, and `cancel()`. `revealFallback()` is an explicit operator-directed
+recovery action after a lost live node event; `settle()` never reveals. `proveLinkage` is required only under `linked`; omit it and the client
 negotiates `same_hash` when the LSP advertises it.
 
 The LSP runs `JitService` from `@fiberlsp/server`, constructed with its `rpc`, an optional `payRpc` (the second
-node — supplying it is what enables `same_hash`), advertised `terms`, `supportedAssets`, an optional
+node — supplying it is what enables `same_hash`), an optional `PaymentPreimageSource`, advertised `terms`, `supportedAssets`, an optional
 `linkageVerifier` (supplying it is what enables `linked`), an optional `minCapacity` floor to satisfy the
 acceptor's UDT auto-accept minimum, an optional persistent `store`, polling controls, and optional
 `deliverWebhook` / `onFraud` hooks. It rejects unsupported assets, duplicate active hashes or invoices, invalid
 proofs, wrong merchant payment hashes or amounts, payments below `min_payment`, over-capacity requests, and unauthorized
 follow-up calls.
 
-`jit.modes` is **derived from deployment, not operator-set**: a verification key at `LINKED_JIT_VK_PATH` enables
-`linked`; a second node at `JIT_PAY_FIBER_RPC_URL` enables `same_hash`. The server refuses to start if the paying
-node resolves to the same node id as the hold node. The test-only `JIT_ALLOW_UNSAFE_EXPOSED_SECRET=1` mode is
-refused alongside a real key, so an operator cannot silently downgrade.
+`jit.modes` is **derived from injected capabilities, not an operator-set mode string**: a `linkageVerifier`
+enables `linked`; a distinct `payRpc` enables `same_hash`. The runnable example maps `LINKED_JIT_VK_PATH` and
+`JIT_PAY_FIBER_RPC_URL` onto those dependencies and refuses to start if the paying node resolves to the hold
+node. Its test-only exposed-secret verifier is refused alongside a real key, so it cannot silently downgrade.
+
+The example derives `FnnStoreChangePreimageSource` from the selected paying-node URL (`FIBER_RPC_URL` for
+`linked`, `JIT_PAY_FIBER_RPC_URL` for `same_hash`). That FNN node must include `pubsub` in
+`RPC_ENABLED_MODULES`; keep its RPC private because the store stream carries payment preimages. Package users
+instead inject any `PaymentPreimageSource` they choose, including an observer with operator-specific transport
+authentication.
 
 ## Discovery
 
@@ -652,7 +661,7 @@ Two layers, the wallet's choice:
 ## Methodology
 
 The design turns entirely on how FNN behaves, so every load-bearing claim above was established by **reading the
-FNN v0.9 source and running live testnet nodes**, not by assumption — the funding model, the auto-accept floor,
+FNN v0.9.0-rc5 prerelease source and running live testnet nodes**, not by assumption — the funding model, the auto-accept floor,
 the peer-dial format, the hold-invoice window, the 32-byte preimage limit, and the single-node hash collision
 that produced `same_hash`. Rough edges and missing surfaces found that way are written up as issue drafts and
 RFCs for the Fiber team in [`upstream-fiber-findings.md`](./upstream-fiber-findings.md).
