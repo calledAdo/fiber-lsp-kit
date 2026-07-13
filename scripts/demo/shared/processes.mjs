@@ -41,8 +41,8 @@ export function createDemoRuntime(cfg) {
       }
     },
 
-    startReferenceServer(extraEnv) {
-      const child = spawn(process.execPath, [join(cfg.repoRoot, "packages/lsp-server/dist/server.js")], {
+    startReferenceComposition(extraEnv) {
+      const child = spawn(process.execPath, [join(cfg.repoRoot, "examples", "reference-lsp", "server.mjs")], {
         stdio: "inherit",
         env: {
           ...process.env,
@@ -60,7 +60,7 @@ export function createDemoRuntime(cfg) {
       });
       children.push(child);
       child.on("close", (code) => {
-        console.log(`[demo:lsp] reference server exited (${code})`);
+        console.log(`[demo:lsp] reference composition exited (${code})`);
         stop();
       });
       return child;

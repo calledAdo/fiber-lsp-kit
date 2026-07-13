@@ -1,17 +1,17 @@
 /**
- * JIT order storage. The record extends the wire `JitOrder` with the merchant-revealed preimage so a
- * server restart between reveal and settle can still settle the held payment (never strand a payer).
+ * JIT order storage. The record extends the wire `JitOrder` with a paying-node-observed or recovery-revealed
+ * preimage so a server restart between capture and settle can still settle the held payment.
  * `MemoryJitStore` is the default; `FileJitStore` survives a restart.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { JitOrder } from "@fiberlsp/protocol";
 
-/** A stored JIT order: the wire order plus the preimage once the merchant reveals it. */
+/** A stored JIT order: the wire order plus the preimage once the LSP learns it. */
 export interface JitOrderRecord extends JitOrder {
   /** Per-order bearer token. Never sent on GET/reveal/cancel responses. */
   order_token: string;
-  /** Set by reveal(); persisted BEFORE settling so a crash cannot lose the payer's settlement. */
+  /** Persisted before settling, whether learned from FNN or supplied through explicit recovery. */
   preimage?: string;
 }
 

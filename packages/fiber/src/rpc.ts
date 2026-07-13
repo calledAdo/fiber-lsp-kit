@@ -1,7 +1,7 @@
 /**
  * FiberChannelRpcClient — a typed wrapper over the FNN JSON-RPC surface the LSP needs.
  *
- * Field shapes are pinned to FNN v0.9 (read from source):
+ * Field shapes are pinned to the official FNN v0.9.0-rc5 prerelease (read from source):
  *   Peer:    connect_peer { address?, pubkey?, save? }
  *   Channel: open_channel { pubkey, funding_amount(hex), funding_udt_type_script?, public?, ... }
  *              -> { temporary_channel_id }
@@ -59,7 +59,7 @@ export interface RawChannel {
 }
 
 /**
- * A node as advertised in the gossip network graph (`graph_nodes` → `NodeInfo`, FNN v0.9).
+ * A node as advertised in the gossip network graph (`graph_nodes` → `NodeInfo`, FNN v0.9.0-rc5).
  *
  * This is the raw material for decentralized, registry-free LSP discovery: every node broadcasts its
  * reachable addresses plus, per asset, the minimum funding it will auto-accept. FNN's own channel-opener
@@ -429,7 +429,7 @@ export class FiberChannelRpcClient {
 
   /**
    * Look up an invoice by its payment hash. Used to verify a prepaid fee actually settled before the LSP
-   * provisions — `status === "Paid"` is the definitive settled state (verified against FNN v0.9 source).
+   * provisions — `status === "Paid"` is the definitive settled state (verified against FNN v0.9.0-rc5 source).
    */
   getInvoice(paymentHash: string): Promise<{ status: InvoiceStatus; invoice_address?: string }> {
     return this.call("get_invoice", [{ payment_hash: paymentHash }]);

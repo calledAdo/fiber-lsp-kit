@@ -87,5 +87,5 @@ if (role === "merchant") {
   console.log(`  makeLinkedProver({ zkeyPath: "${join(outDir, "linkage.ark")}", wasmPath: "${join(outDir, "linkage.wasm")}" })`);
 } else {
   console.log(`\nEnable verification:`);
-  console.log(`  LINKED_JIT_VK_PATH=${join(outDir, "verification_key.json")} npm run server`);
+  console.log(`  LINKED_JIT_VK_PATH=${join(outDir, "verification_key.json")} npm run example:lsp`);
 }

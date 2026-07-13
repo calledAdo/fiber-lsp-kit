@@ -1,4 +1,4 @@
-import { channelAsset, isChannelReady } from "../../../packages/fiber/dist/index.js";
+import { channelAsset, FnnStoreChangePreimageSource, isChannelReady } from "../../../packages/fiber/dist/index.js";
 import { asBig, assetEquals, describeAsset } from "../../../packages/protocol/dist/index.js";
 
 function nodePubkey(info) {
@@ -71,6 +71,12 @@ export async function assertCustomerHoldChannel({ customerRpc, holdPubkey, asset
     channelId: usable.channel_id,
     outbound: asBig(usable.local_balance),
   };
+}
+
+export async function assertPreimageObservation(rpcUrl) {
+  const source = new FnnStoreChangePreimageSource({ rpcUrl });
+  const observation = await source.observe("0x" + "00".repeat(32));
+  observation.close();
 }
 
 export function formatPreflightReport({ profile, nodes, customerChannel }) {

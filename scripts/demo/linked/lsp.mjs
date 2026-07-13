@@ -1,6 +1,6 @@
 import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
 import { ensureArtifacts } from "../shared/artifacts.mjs";
-import { assertCustomerHoldChannel, assertDistinctNodes, assertSameChain, formatPreflightReport, inspectNode } from "../shared/preflight.mjs";
+import { assertCustomerHoldChannel, assertDistinctNodes, assertPreimageObservation, assertSameChain, formatPreflightReport, inspectNode } from "../shared/preflight.mjs";
 import { createDemoRuntime } from "../shared/processes.mjs";
 import { loadConfig } from "./config.mjs";
 
@@ -26,8 +26,9 @@ const customerChannel = await assertCustomerHoldChannel({
   amount: cfg.amounts.jitPayment,
 });
 console.log(formatPreflightReport({ profile: cfg.topology.profile, nodes, customerChannel }));
+await assertPreimageObservation(cfg.topology.nodes.lsp.rpc);
 
-runtime.startReferenceServer({
+runtime.startReferenceComposition({
   FIBER_RPC_URL: cfg.topology.nodes.lsp.rpc,
   JIT_PAY_FIBER_RPC_URL: "",
   LINKED_JIT_VK_PATH: artifacts.vk,

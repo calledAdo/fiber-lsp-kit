@@ -113,7 +113,7 @@ export interface JitOrder {
   created_at: number;
   failure_reason?: string;
   /**
-   * Per-order bearer token returned only by create. Follow-up GET/reveal/cancel calls must present it as
+   * Per-order bearer token returned only by create. Follow-up GET/recovery-reveal/cancel calls must present it as
    * `Authorization: Bearer <token>`.
    */
   order_token?: string;

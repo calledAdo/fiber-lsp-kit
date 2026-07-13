@@ -173,14 +173,16 @@ want raw native speed.
 
 Ship both: the \`.ark\` for speed, the \`.zkey\` for auditing and the native path.
 
-## LSP setup
+## LSP verification setup
 
 \`\`\`bash
-npm i @fiberlsp/server
+# In the fiber-lsp-kit repository, run the optional reference composition:
+npm install
 curl -LO <release>/verification_key.json
-LINKED_JIT_VK_PATH=./verification_key.json npm run server
+LINKED_JIT_VK_PATH=./verification_key.json npm run example:lsp
 \`\`\`
 
+Package consumers can instead inject the same verifier into \`JitService\` from \`@fiberlsp/server\`.
 Verification is built in (\`@noble/curves\`); there is no proof-system dependency.
 
 ## The setup this key came from

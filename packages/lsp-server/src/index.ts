@@ -1,4 +1,4 @@
-/** @fiberlsp/server — reference LSP engine + REST API for the LSPS-Fiber protocol. */
+/** @fiberlsp/server — composable LSP services and REST adapters for the LSPS-Fiber protocol. */
 export { Lsp, type LspConfig } from "./lsp.js";
 export {
   PrepaidService,

@@ -160,7 +160,12 @@ function makeNode(
   return { fetchImpl, calls, captured };
 }
 
-function makeService(node = makeNode()) {
+function makeService(
+  node = makeNode(),
+  preimageSource?: {
+    observe(paymentHash: string): Promise<{ preimage: Promise<string | undefined>; close(): void }>;
+  },
+) {
   const svc = new JitService({
     rpc: new FiberChannelRpcClient({ rpcUrl: "http://node", fetchImpl: node.fetchImpl }),
     terms,
@@ -171,6 +176,7 @@ function makeService(node = makeNode()) {
     sleep: async () => {},
     idgen: () => "jit_1",
     tokenGenerator: () => "tok_1",
+    ...(preimageSource ? { preimageSource } : {}),
   });
   return { svc, node };
 }
@@ -201,6 +207,53 @@ test("fallback reveal settles when get_payment omits the merchant preimage", asy
   const settled = await svc.reveal(order.jit_order_id, linked.merchantPreimage, "tok_1");
   assert.equal(settled.state, "settled");
   assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
+});
+
+test("observes the paying node before forwarding and settles without merchant reveal", async () => {
+  const node = makeNode({ paymentPreimage: "" });
+  const lifecycle: string[] = [];
+  const originalFetch = node.fetchImpl;
+  node.fetchImpl = async (url, init) => {
+    const request = JSON.parse(String(init.body)) as { method: string };
+    if (request.method === "send_payment") lifecycle.push("send");
+    return originalFetch(url, init);
+  };
+  const source = {
+    async observe(paymentHash: string) {
+      lifecycle.push("observe");
+      assert.equal(paymentHash, linked.merchantPaymentHash);
+      return {
+        preimage: Promise.resolve(linked.merchantPreimage),
+        close() {
+          lifecycle.push("close");
+        },
+      };
+    },
+  };
+  const { svc } = makeService(node, source);
+
+  const settled = await svc.run((await svc.createOrder(req())).jit_order_id);
+
+  assert.equal(settled.state, "settled");
+  assert.deepEqual(lifecycle, ["observe", "send", "close"]);
+  assert.equal(node.captured.settled, `${linked.hold}:${linked.holdPreimage}`);
+});
+
+test("ignores an invalid observed preimage and leaves the reveal fallback available", async () => {
+  const node = makeNode({ paymentPreimage: "" });
+  const source = {
+    async observe() {
+      return { preimage: Promise.resolve(other.merchantPreimage), close() {} };
+    },
+  };
+  const { svc } = makeService(node, source);
+  const order = await svc.createOrder(req());
+
+  const afterRun = await svc.run(order.jit_order_id);
+
+  assert.equal(afterRun.state, "forwarding");
+  assert.equal(node.captured.settled, "");
+  assert.equal((await svc.reveal(order.jit_order_id, linked.merchantPreimage, "tok_1")).state, "settled");
 });
 
 test("bad early reveal is rejected and does not poison later settlement", async () => {

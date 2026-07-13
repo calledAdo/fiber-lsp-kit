@@ -28,7 +28,7 @@ export class MemoryOrderStore implements OrderStore {
 /**
  * A durable order store backed by a single JSON file. Loads existing orders on construction and rewrites
  * the file atomically (temp file + rename) on every `put`, so a server restart resumes with its orders
- * intact. Fine for a reference server; a production deployment would move to SQLite/Postgres behind the
+ * intact. Fine for a small deployment or example; production can move to SQLite/Postgres behind the
  * same interface.
  */
 export class FileOrderStore implements OrderStore {

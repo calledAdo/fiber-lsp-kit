@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { JitCheckout } from "../../../packages/client/dist/index.js";
 import { Lsp, JitService, createApi } from "../../../packages/lsp-server/dist/index.js";
 import { apiLspClient, demoJitTerms, demoOffering, runJitSale, runRentPeriods } from "../shared/e2e-flow.mjs";
-import { createWorld, makeNode, mockRpcClient, seedCustomerHoldChannel } from "../shared/mock-node.mjs";
+import { createWorld, makeNode, mockPreimageSource, mockRpcClient, seedCustomerHoldChannel } from "../shared/mock-node.mjs";
 import { loadConfig } from "./config.mjs";
 
 const cfg = loadConfig();
@@ -34,6 +34,7 @@ const lsp = new Lsp({
 const jit = new JitService({
   rpc: rpc.hold,
   payRpc: rpc.payment,
+  preimageSource: mockPreimageSource(nodes.payment),
   terms,
   supportedAssets: [offering],
   minCapacity: cfg.jit.minCapacity,

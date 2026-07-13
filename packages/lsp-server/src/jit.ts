@@ -27,6 +27,8 @@ import {
   openChannelAndAwait,
   receivedTlcExpirySeconds,
   type FiberChannelRpcClient,
+  type PaymentPreimageObservation,
+  type PaymentPreimageSource,
 } from "@fiberlsp/fiber";
 import { MemoryJitStore, type JitOrderRecord, type JitStore } from "./jitStore.js";
 import { makeKeyedLock, type KeyedLock } from "./keyedLock.js";
@@ -43,6 +45,11 @@ export interface JitServiceConfig {
    * single-node deployment, which can only serve `linked`. Supplying a *distinct* node enables `same_hash`.
    */
   payRpc?: FiberChannelRpcClient;
+  /**
+   * Optional paying-node preimage observer. Arm-before-send implementations remove the merchant from normal
+   * settlement; FNN's store-change stream is live-only, so `/reveal` remains an explicit recovery fallback.
+   */
+  preimageSource?: PaymentPreimageSource;
   terms: JitTerms;
   supportedAssets: AssetOffering[];
   /** Verifies `linked` linkage proofs. Omit on a deployment that serves only `same_hash`. */
@@ -446,10 +453,10 @@ export class JitService {
       }
     }
     if (!rec.preimage) {
-      // The merchant invoice is paid but get_payment has not surfaced the preimage yet. The hold stays held and
-      // safe; settlement waits for the merchant's reveal. Surface it so the operator sees the open exposure.
+      // The merchant invoice is paid but no durable/readable preimage is available. The hold stays held and safe;
+      // settlement waits for explicit recovery. Surface it so the operator sees the remaining rc5 exposure.
       console.warn(
-        `[jit] order ${rec.jit_order_id}: merchant invoice paid but preimage unavailable from get_payment; awaiting merchant reveal to settle`,
+        `[jit] order ${rec.jit_order_id}: merchant invoice paid but preimage unavailable; awaiting explicit recovery reveal`,
       );
       return rec;
     }
@@ -536,20 +543,55 @@ export class JitService {
   private async forward(id: string): Promise<boolean> {
     const rec = this.require(id);
     const existing = await this.pay.getPayment(rec.request.merchant_payment_hash).catch(() => undefined);
+    let observation: PaymentPreimageObservation | undefined;
+    if (this.cfg.preimageSource && existing?.status !== "Success") {
+      try {
+        // The subscription acknowledgement is the race barrier: do not send until the observer is armed.
+        observation = await this.cfg.preimageSource.observe(rec.request.merchant_payment_hash);
+      } catch (e) {
+        console.warn(
+          `[jit] order ${id}: could not observe paying-node preimages; explicit reveal recovery remains available: ` +
+            (e instanceof Error ? e.message : String(e)),
+        );
+      }
+    }
     if (existing?.status !== "Success" && existing?.status !== "Inflight") {
       try {
         await this.pay.sendPayment({ invoice: rec.request.merchant_invoice });
       } catch {
+        observation?.close();
         return false;
       }
     }
-    for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
-      const p = await this.pay.getPayment(rec.request.merchant_payment_hash).catch(() => undefined);
-      if (p?.status === "Success") return true;
-      if (p?.status === "Failed") return false;
-      await this.cfg.sleep(this.cfg.pollIntervalMs);
+    try {
+      for (let i = 0; i < this.cfg.readyPollAttempts; i++) {
+        const p = await this.pay.getPayment(rec.request.merchant_payment_hash).catch(() => undefined);
+        if (p?.status === "Success") {
+          if (observation) {
+            const observed = await Promise.race([
+              observation.preimage,
+              this.cfg.sleep(Math.max(this.cfg.pollIntervalMs, 1)).then(() => undefined),
+            ]);
+            if (observed) this.persistObservedPreimage(id, observed);
+          }
+          return true;
+        }
+        if (p?.status === "Failed") return false;
+        await this.cfg.sleep(this.cfg.pollIntervalMs);
+      }
+      return false;
+    } finally {
+      observation?.close();
     }
-    return false;
+  }
+
+  private persistObservedPreimage(id: string, preimage: string): void {
+    const rec = this.require(id);
+    if (!this.holdPreimageForSettle(rec, preimage)) {
+      console.warn(`[jit] order ${id}: paying-node preimage source returned a value that does not satisfy the order`);
+      return;
+    }
+    this.cfg.store.put({ ...rec, preimage });
   }
 
   private async refund(id: string, reason: string): Promise<JitOrderRecord> {

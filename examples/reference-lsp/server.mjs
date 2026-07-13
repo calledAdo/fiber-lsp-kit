@@ -27,35 +27,40 @@
  *                        different nodes, both invoices can carry the same hash: no proving key, no circuit, no
  *                        ceremony. Startup refuses if it resolves to the same node as FIBER_RPC_URL.
  *
- *   JIT_STORE_PATH    — persist JIT orders + revealed preimages (survives restart); unset ⇒ in-memory.
+ *   JIT_STORE_PATH    — persist JIT orders + captured preimages (survives restart); unset ⇒ in-memory.
  *   JIT_FEE_BPS / JIT_FEE_BASE / JIT_MIN_PAYMENT / JIT_MAX_EXPIRY — pricing (defaults below).
  *
- * The offering (assets, capacities, fee schedule) is configured in makeDefaultLsp() below; edit it to
- * match your node's liquidity. This entrypoint is deliberately thin — it just constructs the service bricks
- * (Lsp identity/liquidity, PrepaidService, JitService, InvoiceWebhookService) and lets createApi compose them.
+ * The paying FNN node must enable its `pubsub` RPC module. The preimage observer is derived from the selected
+ * paying-node URL; applications with different transport or authentication requirements can inject their own
+ * PaymentPreimageSource when composing JitService.
+ *
+ * This is a runnable example, not package behavior. The offering, environment variables, storage choices and
+ * Node HTTP transport below demonstrate one way to compose the independently exported service bricks.
  */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { udtAsset, CKB, type AssetOffering, type LinkageVerifier } from "@fiberlsp/protocol";
-import { FiberChannelRpcClient } from "@fiberlsp/fiber";
-import { Lsp } from "./lsp.js";
-import { PrepaidService, makeInvoiceFeeVerifier } from "./prepaid.js";
-import { createApi } from "./api.js";
-import { FileOrderStore } from "./orderStore.js";
-import { InvoiceWebhookService } from "./invoiceWebhooks.js";
-import { createMerchantApi } from "./merchantApi.js";
-import { FileWatchStore } from "./watchStore.js";
-import { JitService } from "./jit.js";
-import { FileJitStore } from "./jitStore.js";
-import { selectLinkageVerifiers } from "./linkageConfig.js";
+import { FiberChannelRpcClient, FnnStoreChangePreimageSource } from "@fiberlsp/fiber";
 import {
+  CKB,
   compositeLinkageVerifier,
   createGroth16DualSha256Verifier,
   exposedSecretVerifier,
+  udtAsset,
   verifyGroth16Bn254,
-  type Groth16Proof,
-  type Groth16VerificationKey,
 } from "@fiberlsp/protocol";
+import {
+  createApi,
+  createMerchantApi,
+  FileJitStore,
+  FileOrderStore,
+  FileWatchStore,
+  InvoiceWebhookService,
+  JitService,
+  Lsp,
+  makeInvoiceFeeVerifier,
+  PrepaidService,
+  selectLinkageVerifiers,
+} from "@fiberlsp/server";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const FIBER_RPC_URL = process.env.FIBER_RPC_URL ?? "http://127.0.0.1:8227";
@@ -72,7 +77,7 @@ const RUSD = udtAsset(
 
 const CKB_SHANNONS = 100_000_000n;
 
-function defaultOfferings(): AssetOffering[] {
+function defaultOfferings() {
   return [
     {
       asset: CKB,
@@ -96,7 +101,7 @@ function defaultOfferings(): AssetOffering[] {
 }
 
 /** The operator's view of a JIT order, line by line — enabled with JIT_LOG=1. */
-function logJitEvent({ event, order }: { event: string; order: { jit_order_id: string; request: { mode?: string }; channel_outpoint?: string; failure_reason?: string } }): void {
+function logJitEvent({ event, order }) {
   if (event === "payment_held") return; // the "opening" line already reports the hold; avoid a duplicate
   const id = order.jit_order_id.slice(0, 8);
   const line =
@@ -156,7 +161,7 @@ async function main() {
     addresses,
     supportedAssets: defaultOfferings(),
     feeModes: ["prepaid", "from_capacity"],
-    operator: "fiber-lsp-kit reference server",
+    operator: "fiber-lsp-kit reference composition",
   });
   const prepaid = new PrepaidService({
     rpc,
@@ -169,17 +174,16 @@ async function main() {
     ...(process.env.READY_POLL_ATTEMPTS ? { readyPollAttempts: Number(process.env.READY_POLL_ATTEMPTS) } : {}),
     ...(process.env.READY_POLL_INTERVAL_MS ? { readyPollIntervalMs: Number(process.env.READY_POLL_INTERVAL_MS) } : {}),
   });
-  let jit: JitService | undefined;
+  let jit;
   // Resolve the Groth16 verifier (all IO here); the pure selectLinkageVerifiers() decides what actually runs.
-  let groth16: LinkageVerifier | undefined;
+  let groth16;
   const vkPath = process.env.LINKED_JIT_VK_PATH;
   if (vkPath) {
     try {
       const vk = JSON.parse(readFileSync(vkPath, "utf8"));
       groth16 = createGroth16DualSha256Verifier({
         verificationKey: vk,
-        verifyGroth16: (v, pub, proof) =>
-          verifyGroth16Bn254(v as Groth16VerificationKey, pub, proof as Groth16Proof),
+        verifyGroth16: (v, pub, proof) => verifyGroth16Bn254(v, pub, proof),
       });
     } catch (e) {
       console.warn(`[jit] could not load Groth16 vk from ${vkPath}: ${e}`);
@@ -195,7 +199,7 @@ async function main() {
   // URLs resolve to one FNN process, that node would be asked to hold and pay the same hash — exactly the
   // collision `same_hash` claims to have escaped — and the JIT flow would strand a held customer payment.
   const payRpcUrl = process.env.JIT_PAY_FIBER_RPC_URL;
-  let payRpc: FiberChannelRpcClient | undefined;
+  let payRpc;
   if (payRpcUrl) {
     const candidate = new FiberChannelRpcClient({ rpcUrl: payRpcUrl });
     const payInfo = await candidate.nodeInfo();
@@ -213,9 +217,13 @@ async function main() {
   }
 
   if (verifiers.length > 0 || payRpc) {
+    const preimageSource = new FnnStoreChangePreimageSource({
+      rpcUrl: payRpcUrl || FIBER_RPC_URL,
+    });
     jit = new JitService({
       rpc,
       ...(payRpc ? { payRpc } : {}),
+      preimageSource,
       // JIT is the default provisioning path, so the one-time channel-activation cost is charged here rather
       // than prepaid. The three parts pay for different things:
       //   fee_base — the on-chain open + eventual close, and the risk the merchant makes one sale and leaves.
@@ -265,7 +273,7 @@ async function main() {
   // Optional merchant invoice-webhook API, mounted only when a merchant node is configured. It watches
   // that node's invoices (which may be a different node than the LSP's) and POSTs invoice.* webhooks.
   const merchantRpcUrl = process.env.MERCHANT_FIBER_RPC_URL;
-  let merchantHandle: ReturnType<typeof createMerchantApi> | undefined;
+  let merchantHandle;
   if (merchantRpcUrl) {
     const merchant = new InvoiceWebhookService({
       rpc: new FiberChannelRpcClient({ rpcUrl: merchantRpcUrl }),
@@ -285,10 +293,10 @@ async function main() {
       res.writeHead(204).end();
       return;
     }
-    const chunks: Buffer[] = [];
-    reqMsg.on("data", (c) => chunks.push(c as Buffer));
+    const chunks = [];
+    reqMsg.on("data", (c) => chunks.push(c));
     reqMsg.on("end", async () => {
-      let body: unknown;
+      let body;
       if (chunks.length) {
         try {
           body = JSON.parse(Buffer.concat(chunks).toString("utf8"));

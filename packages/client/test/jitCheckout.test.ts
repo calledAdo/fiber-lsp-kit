@@ -120,10 +120,17 @@ test("checkout registers canonical single-node JIT order and returns customer ho
   assert.ok(!("payment_hash" in intent));
 });
 
-test("settle reveals merchant preimage with bearer token when LSP has not auto-settled", async () => {
+test("settle never reveals automatically and recovery reveal is explicit", async () => {
   const { checkout, rest } = makeCheckout(["Open", "Paid"], ["forwarding"]);
   const session = await checkout.checkout({ asset: RUSD, amount: "100000000" });
-  const settled = await session.settle({ intervalMs: 0 });
+  await assert.rejects(
+    session.settle({ attempts: 2, intervalMs: 0 }),
+    (e: JitCheckoutError) => e.code === "timeout",
+  );
+
+  assert.ok(!rest.calls.some((c) => c.path.endsWith("/reveal")));
+
+  const settled = await session.revealFallback();
 
   assert.equal(settled.state, "settled");
   const reveal = rest.calls.find((c) => c.path.endsWith("/reveal"))!;

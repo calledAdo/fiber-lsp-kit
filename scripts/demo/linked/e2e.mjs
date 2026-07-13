@@ -15,7 +15,7 @@ import {
   runJitSale,
   runRentPeriods,
 } from "../shared/e2e-flow.mjs";
-import { createWorld, makeNode, mockRpcClient, seedCustomerHoldChannel } from "../shared/mock-node.mjs";
+import { createWorld, makeNode, mockPreimageSource, mockRpcClient, seedCustomerHoldChannel } from "../shared/mock-node.mjs";
 import { loadConfig } from "./config.mjs";
 
 const cfg = loadConfig();
@@ -53,6 +53,7 @@ const lsp = new Lsp({
 });
 const jit = new JitService({
   rpc: rpc.lsp,
+  preimageSource: mockPreimageSource(nodes.lsp),
   linkageVerifier: verifier,
   terms,
   supportedAssets: [offering],

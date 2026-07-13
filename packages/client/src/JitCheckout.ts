@@ -80,7 +80,10 @@ export interface JitCheckoutSession {
   order: JitOrder;
   netAmount: string;
   fee: string;
+  /** Wait for LSP-side settlement. This never sends the merchant preimage to the LSP. */
   settle(opts?: { attempts?: number; intervalMs?: number }): Promise<JitOrder>;
+  /** Explicit recovery only: reveal after the merchant invoice is Paid when the LSP lost its live observation. */
+  revealFallback(): Promise<JitOrder>;
   cancel(): Promise<JitOrder>;
 }
 
@@ -200,17 +203,11 @@ export class JitCheckout {
         await this.sleep(intervalMs);
       }
 
-      let revealed = false;
       for (let i = 0; i < attempts; i++) {
         const current = await this.cfg.lsp.getJitOrder(order.jit_order_id, token);
         if (current.state === "settled") return current;
         if (current.state === "refunded" || current.state === "expired") {
           throw new JitCheckoutError("order_" + current.state, `JIT order is ${current.state}`);
-        }
-        if (!revealed && current.state === "forwarding") {
-          revealed = true;
-          const afterReveal = await this.cfg.lsp.revealJitOrder(order.jit_order_id, link.merchantPreimage, token);
-          if (afterReveal.state === "settled") return afterReveal;
         }
         if (i === attempts - 1) throw new JitCheckoutError("timeout", "JIT order never settled");
         await this.sleep(intervalMs);
@@ -226,6 +223,16 @@ export class JitCheckout {
       netAmount: order.forward_amount,
       fee: order.fee,
       settle,
+      revealFallback: async () => {
+        const { status } = await this.cfg.rpc.getInvoice(merchantPaymentHash);
+        if (status !== "Paid") {
+          throw new JitCheckoutError(
+            "merchant_invoice_not_paid",
+            `refusing recovery reveal while merchant invoice is ${status}`,
+          );
+        }
+        return this.cfg.lsp.revealJitOrder(order.jit_order_id, link.merchantPreimage, token);
+      },
       cancel: () => this.cfg.lsp.cancelJitOrder(order.jit_order_id, token),
     };
   }

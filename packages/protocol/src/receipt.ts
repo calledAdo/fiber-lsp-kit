@@ -6,7 +6,7 @@
  * outcome (paid, or Expired/Cancelled with `paid: false`), so a ledger reflects attempts, not only wins.
  *
  * It lives in the protocol package because both sides emit it identically: the client SDK's
- * `PaymentWatcher` (polling from the app) and the reference server's invoice-webhook service (polling from
+ * `PaymentWatcher` (polling from the app) and a server-side invoice-webhook service (polling from
  * a backend) build the same Receipt and POST the same `{ type, receipt }` event — so a merchant backend
  * consumes either interchangeably.
  */

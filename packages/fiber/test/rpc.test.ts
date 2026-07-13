@@ -163,7 +163,7 @@ test("graphNodesAll follows cursors and caps returned nodes", async () => {
   const page = (ids: string[], cursor: string): GraphNodesPage => ({
     nodes: ids.map((id) => ({
       node_name: id,
-      version: "0.9.0",
+      version: "0.9.0-rc5",
       addresses: [],
       features: [],
       pubkey: `0x${id}`,

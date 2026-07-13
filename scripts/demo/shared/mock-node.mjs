@@ -5,6 +5,7 @@
 // NOT touch the ZK (real prover + real verifier do that above it).
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 
 import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
 
@@ -95,8 +96,12 @@ export function makeNode(world, role, port) {
   const status = new Map();
   const payments = new Map();
   const channels = [];
+  const preimageObservers = new Set();
   const pubkey = pubkeyFor(port);
   let seq = 0;
+  const emitPreimage = (payment_hash, payment_preimage) => {
+    for (const observer of preimageObservers) observer({ payment_hash, payment_preimage });
+  };
   const rpc = (method, params) => {
     const p0 = params?.[0] ?? {};
     switch (method) {
@@ -153,6 +158,7 @@ export function makeNode(world, role, port) {
           signature,
         });
         status.set(hash, "Open");
+        if (!p0.payment_hash) emitPreimage(hash, preimage);
         return { invoice_address: addr, invoice: { amount: BigInt(p0.amount).toString(), data: { payment_hash: hash } } };
       }
       case "parse_invoice": {
@@ -176,7 +182,8 @@ export function makeNode(world, role, port) {
         const h = world.held.get(p0.payment_hash);
         if (h) {
           moveAcrossRoute(h.route, h.invoice);
-          h.node.payments.set(p0.payment_hash, { status: "Success", payment_preimage: p0.payment_preimage });
+          h.node.payments.set(p0.payment_hash, { status: "Success" });
+          h.node.emitPreimage(p0.payment_hash, p0.payment_preimage);
           world.held.delete(p0.payment_hash);
         }
         return {};
@@ -269,7 +276,8 @@ export function makeNode(world, role, port) {
         if (inv.preimage) { // a regular merchant invoice: the payer learns the preimage — settled now
           moveAcrossRoute(route, inv);
           issuer.setStatus(inv.hash, "Paid");
-          payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", payment_preimage: inv.preimage, amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
+          payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
+          emitPreimage(inv.hash, inv.preimage);
           return { payment_hash: inv.hash, status: "Success" };
         }
         // a HOLD invoice: captured and HELD until the issuer settles it
@@ -283,9 +291,51 @@ export function makeNode(world, role, port) {
       default: return null;
     }
   };
-  const node = { role, port, pubkey, rpc, setStatus: (h, s) => status.set(h, s), payments, channels };
+  const node = {
+    role,
+    port,
+    pubkey,
+    rpc,
+    setStatus: (h, s) => status.set(h, s),
+    payments,
+    channels,
+    emitPreimage,
+    observePreimages(observer) {
+      preimageObservers.add(observer);
+      return () => preimageObservers.delete(observer);
+    },
+  };
   registry[role] = node;
   return node;
+}
+
+/** In-process equivalent of FNN's live-only store-change subscription. */
+export function mockPreimageSource(node) {
+  return {
+    async observe(paymentHash) {
+      let done = false;
+      let resolvePreimage;
+      const preimage = new Promise((resolve) => {
+        resolvePreimage = resolve;
+      });
+      const unsubscribe = node.observePreimages((event) => {
+        if (event.payment_hash.toLowerCase() !== paymentHash.toLowerCase()) return;
+        if (done) return;
+        done = true;
+        unsubscribe();
+        resolvePreimage(event.payment_preimage);
+      });
+      return {
+        preimage,
+        close() {
+          if (done) return;
+          done = true;
+          unsubscribe();
+          resolvePreimage(undefined);
+        },
+      };
+    },
+  };
 }
 
 export function mockRpcClient(node) {
@@ -320,6 +370,29 @@ export function serveMockWorld(world) {
         }));
       }
     });
+    const sockets = new WebSocketServer({ noServer: true });
+    server.on("upgrade", (request, socket, head) => {
+      sockets.handleUpgrade(request, socket, head, (ws) => sockets.emit("connection", ws, request));
+    });
+    sockets.on("connection", (socket) => {
+      let unsubscribe;
+      socket.on("message", (raw) => {
+        const request = JSON.parse(String(raw));
+        if (request.method !== "subscribe_store_changes") return;
+        const subscription = 1;
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: subscription }));
+        unsubscribe?.();
+        unsubscribe = node.observePreimages((event) => {
+          socket.send(JSON.stringify({
+            jsonrpc: "2.0",
+            method: "store_changes",
+            params: { subscription, result: { PutPreimage: event } },
+          }));
+        });
+      });
+      socket.on("close", () => unsubscribe?.());
+    });
+    server.on("close", () => sockets.close());
     server.listen(node.port, "127.0.0.1", () => {
       console.log(`[mock-fnn] ${node.role.padEnd(9)} http://127.0.0.1:${node.port} (${node.pubkey.slice(0, 14)}...)`);
     });

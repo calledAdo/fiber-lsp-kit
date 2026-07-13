@@ -1,7 +1,7 @@
 {
   "name": "@fiberlsp/server",
   "version": "0.0.0",
-  "description": "Reference LSP server for Fiber Network — runs beside an FNN node and provisions inbound liquidity per asset.",
+  "description": "Composable server-side LSP services and protocol adapters for Fiber Network.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -12,10 +12,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "!dist/server.*"],
   "scripts": {
-    "build": "tsc -b",
-    "start": "node dist/server.js"
+    "build": "tsc -b"
   },
   "dependencies": {
     "@fiberlsp/fiber": "0.0.0",

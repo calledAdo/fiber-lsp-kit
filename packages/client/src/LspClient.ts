@@ -111,7 +111,7 @@ export class LspClient {
     return this.req<JitOrder>("GET", `/lsp/v1/jit/orders/${id}`, undefined, token);
   }
 
-  /** Fallback settle: hand the LSP the merchant preimage when it could not read it from the forward. */
+  /** Explicit recovery only: hand the LSP the preimage after its live paying-node observation was lost. */
   revealJitOrder(id: string, preimage: string, token: string): Promise<JitOrder> {
     return this.req<JitOrder>("POST", `/lsp/v1/jit/orders/${id}/reveal`, { preimage }, token);
   }

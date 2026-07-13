@@ -25,7 +25,7 @@ export type Asset =
 
 /**
  * How the client pays the LSP's opening fee. Grounded in what FNN actually supports (there is no
- * native push/opening-fee at channel open — verified against FNN v0.9 source):
+ * native push/opening-fee at channel open — verified against FNN v0.9.0-rc5 prerelease source):
  *
  * The fee itself is always denominated in CKB (see fee.ts for why).
  *

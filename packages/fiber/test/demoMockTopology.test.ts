@@ -5,6 +5,7 @@ import {
   connectMockNodes,
   createWorld,
   makeNode,
+  mockPreimageSource,
   seedCustomerHoldChannel,
 } from "../../../scripts/demo/shared/mock-node.mjs";
 
@@ -79,6 +80,24 @@ test("regular invoice payment requires a funded channel path", () => {
   assert.equal(customer.channels[0].local_balance, "0x384");
   assert.equal(lsp.channels.find((channel) => channel.pubkey === merchant.pubkey)?.local_balance, "0x384");
   assert.equal(merchant.channels[0].local_balance, "0x64");
+  assert.ok(!("payment_preimage" in customer.rpc("get_payment", [{ payment_hash: issued.invoice.data.payment_hash }])));
+});
+
+test("mock payment preimages use the same arm-before-send observation seam as live FNN", async () => {
+  const world = createWorld();
+  const payer = makeNode(world, "payer", 9401);
+  const merchant = makeNode(world, "merchant", 9402);
+  connectMockNodes(world, "payer", "merchant");
+  payer.rpc("open_channel", [{
+    pubkey: merchant.pubkey,
+    funding_amount: "0x3e8",
+    funding_udt_type_script: assetScript,
+  }]);
+  const issued = merchant.rpc("new_invoice", [{ amount: "0x64", currency: "Fibt", udt_type_script: assetScript }]);
+  const observation = await mockPreimageSource(payer).observe(issued.invoice.data.payment_hash);
+
+  assert.equal(payer.rpc("send_payment", [{ invoice: issued.invoice_address }]).status, "Success");
+  assert.equal(await observation.preimage, world.invoices.get(issued.invoice_address).preimage);
 });
 
 test("regular invoice cannot jump between separated hold and payment nodes", () => {
