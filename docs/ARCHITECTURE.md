@@ -111,7 +111,7 @@ Because of where the trust ends up.
 |---|---|---|
 | Merchant | **trusts the LSP** with a fee, before any channel exists | trusts nothing — is paid before the LSP can settle |
 | Customer | not involved | trusts nothing — the held payment either delivers or refunds |
-| LSP | trusts nothing | trusts the linkage proof, in one of the two modes (see [Trust model](#trust-model)) |
+| LSP | trusts nothing | `linked`: proof soundness; `same_hash`: two-node operational handoff; both currently rely on the merchant reveal fallback (see [Trust model](#trust-model)) |
 
 Prepaid places the risk on the **least sophisticated, least capitalised party**: a cold-start merchant. JIT
 moves all residual trust onto the **LSP** — the party with capital, expertise, and a repeated game, risking its
@@ -177,8 +177,8 @@ rather than a monolith.
 must be bounded by construction rather than by care. It can lose money in exactly one way — pay the merchant
 invoice, then fail to settle the customer hold — so the engine never opens before the hold is funded, never forwards
 when too little hold lifetime remains, reads the on-chain TLC expiry rather than guessing it, and re-drives
-in-flight orders on restart. Because FNN exposes no push or subscription for invoice, channel, or payment state,
-every transition is discovered by polling.
+in-flight orders on restart. FNN exposes low-level WebSocket `subscribe_store_changes`, but not typed invoice,
+channel, or payment lifecycle events. The kit therefore still discovers those transitions by polling.
 
 ## The system
 
@@ -186,6 +186,7 @@ every transition is discovered by polling.
 |---|---|---|
 | `@fiberlsp/protocol` | The LSPS-Fiber contracts: assets, order/JIT/lease/receipt types, fee/rent math, the molecule `Script` encoder, linkage-proof interfaces, the Groth16 verifier. | — |
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, channel-opening helpers. | `protocol` |
+| `@fiberlsp/auth` | Optional merchant identity proof, scoped Ed25519 capabilities, policy/challenge stores, and composable API middleware. Authentication remains off unless the operator mounts it. | `protocol`, `fiber` |
 | `@fiberlsp/registry` | Static provider registry + gossip-graph discovery, merged by pubkey. | `protocol`, `fiber` |
 | `@fiberlsp/server` | Reference LSP engine + REST API, JIT service (`linked` and `same_hash`), invoice-webhook service, injectable stores. | `protocol`, `fiber` |
 | `@fiberlsp/client` | Merchant/wallet SDK: discovery, quote comparison, inbound purchase, invoice checkout, JIT checkout, payment watching, streaming rent, ledger. | `protocol`, `fiber`, `registry` |
@@ -240,7 +241,7 @@ The merchant generates a 32-byte secret `S` and never shares it. Everything else
    customer                    LSP                          merchant
       │                         │                              │
       │                         │◀───── 1. create order ───────│   hold_hash, merchant invoice,
-      │                         │        (+ linkage proof)     │   amount, target pubkey
+      │                         │    (linked: + linkage proof) │   amount, target pubkey
       │                         │
       │                         │   verify EVERYTHING here — before any capital moves
       │                         │
@@ -408,8 +409,11 @@ timer is checked against the money-flow rather than assumed. All of this is shar
 JIT is trustless for the customer and the merchant by construction, in both modes. What remains is the LSP's
 exposure, and it differs sharply between them.
 
-**Under `same_hash` there is nothing left.** No proof system, no proving key, no setup. This is the mode's whole
-argument, and the reason it is preferred.
+**Under `same_hash` no cryptographic proof assumption remains.** There is no proof system, proving key, or setup,
+which is why the mode is preferred. Operational exposure remains: the LSP application must durably coordinate
+the hold and paying nodes, and current FNN payment results do not expose the settled preimage. Until that changes,
+the LSP still depends on the merchant's post-payment reveal; a crash without persistent state, or a merchant that
+withholds the reveal, leaves the hold to refund at expiry after the LSP has forwarded value.
 
 **Under `linked` the LSP is exposed to the soundness of the linkage proof.** A forged proof for two *unlinked*
 hashes makes the LSP open a channel, pay the merchant invoice, and then fail to settle the customer hold: a direct
@@ -606,7 +610,10 @@ dependency-injected (`Memory*` / `File*`), and the JIT linkage backend is select
 The merchant drives `JitCheckout` from `@fiberlsp/client`:
 
 ```ts
-const checkout = new JitCheckout({ rpc: merchantRpc, lspBaseUrl, merchantPubkey, merchantAddress, proveLinkage });
+import { JitCheckout, LspClient } from "@fiberlsp/client";
+
+const lsp = new LspClient({ baseUrl: "https://lsp.example" });
+const checkout = new JitCheckout({ rpc: merchantRpc, lsp, merchantPubkey, merchantAddress, proveLinkage });
 const session = await checkout.checkout({ asset: RUSD, amount: "300000000", expirySeconds: 1800 });
 console.log(session.invoice);            // show to the customer
 const final = await session.settle();    // waits for merchant payment, reveals if needed

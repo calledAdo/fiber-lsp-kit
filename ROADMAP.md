@@ -27,11 +27,13 @@ something node operators could run in production.
   live funding cell, is the real fix. (JIT needs none of this: the fee is netted from the first forwarded
   payment.)
 - **Persistence hardening.** The file-backed stores survive restarts (orders, invoice watches, JIT orders +
-  revealed preimages); move to SQLite/Postgres behind the existing `OrderStore`/`JitStore` interfaces, with
-  order expiry sweeping.
-- **Operator surface.** Auth + rate-limiting on the REST API, structured logs, and a Prometheus metrics
-  endpoint alongside `/lsp/v1/liquidity`. For JIT: a resume-on-boot pass over non-terminal orders (the
-  crash-safety data is already persisted).
+  revealed preimages), and the reference server already calls `JitService.resume()` and
+  `InvoiceWebhookService.resume()` at startup. Move to SQLite/Postgres behind the existing store interfaces,
+  with order expiry sweeping.
+- **Operator surface.** Optional merchant identity and capability authentication ships in `@fiberlsp/auth` and
+  composes through `createApi` middleware. Production deployments still need operator-managed key rotation,
+  durable policy storage, rate limiting, structured logs, and a Prometheus metrics endpoint alongside
+  `/lsp/v1/liquidity`; authentication remains off by default.
 - **Lease lapse enforcement.** `StreamingLease` detects a lapsed lease client-side; add the LSP-side
   counterpart (rent watcher per leased channel → close after `grace_periods`).
 

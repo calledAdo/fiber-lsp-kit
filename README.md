@@ -34,6 +34,7 @@ provisioning, plus the merchant tooling to run on it, is this kit.**
 |---|---|
 | `@fiberlsp/protocol` | The LSPS-Fiber contract layer: assets, order/JIT/lease/receipt types, fee/rent math, and linkage proof contracts. |
 | `@fiberlsp/fiber` | Typed FNN JSON-RPC adapter: invoices, payments, channels, graph reads, peer connection, and channel opening helpers. |
+| `@fiberlsp/auth` | Optional merchant-authentication bricks: signed Fiber-invoice identity proofs, scoped Ed25519 capability tokens, policy/challenge stores, and `createApi` middleware. Off by default. |
 | `@fiberlsp/registry` | Static provider registry + gossip graph discovery: load `providers.json`, merge by LSP pubkey, and resolve live provider offers. |
 | `@fiberlsp/server` | Reference LSP engine + REST API, `JitService` in both `linked` and `same_hash` modes, and server-side merchant invoice-webhook service. |
 | `@fiberlsp/prover-linked` | Merchant-side Groth16 linkage prover for `linked` JIT: in-process witness generation + a bundled WebAssembly prover (pure `npm i`, no binary), with an optional native-subprocess backend for speed. Not needed for `same_hash`. |
@@ -108,8 +109,17 @@ The full **protocol, REST API, and fee model** are in **[`docs/ARCHITECTURE.md`]
 FNN integration facts pinned from source are in **[`AI-USAGE.md`](./AI-USAGE.md)**.
 
 ```ts
+import { JitCheckout, LspClient } from "@fiberlsp/client";
+
 // A merchant with ZERO channels takes its first sale — the sale itself buys the channel:
-const sale = await new JitCheckout({ rpc, lsp, merchantPubkey }).checkout({
+const lsp = new LspClient({ baseUrl: "https://lsp.example" });
+const sale = await new JitCheckout({
+  rpc: merchantRpc,
+  lsp,
+  merchantPubkey,
+  merchantAddress,
+  proveLinkage, // required when the selected LSP offers only linked JIT
+}).checkout({
   asset: RUSD, amount: "2000000000", channelCapacity: "10000000000", // pay 20 RUSD; open a 100 RUSD channel
 });
 showCustomer(sale.invoice); // a HOLD invoice — the payment is captured and held
@@ -122,11 +132,22 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 ## What's real, simulated, and production-bound
 
-| | |
-|---|---|
-| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce on live nodes via [`scripts/demo/`](./scripts/demo) with real endpoints in the selected scenario's `demo.config.json`. |
-| **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
-| **Needed for production** | **for `linked` JIT only, a linkage setup the LSP can trust** — phase 1 is the public Perpetual Powers of Tau, but the circuit-specific phase 2 is a single dev contribution, so `linked` is not yet trustless in practice (running `same_hash` instead removes the setup entirely; a multi-party phase 2, or PTLCs, also removes the dependency) · **`get_payment` must expose the settled preimage** ([finding #4](./docs/upstream-fiber-findings.md)) or the LSP depends on the merchant's `reveal` to recoup the forward · auth + rate-limiting on the LSP REST · native LSP endpoint/capability advertisement in the Fiber graph · an escrowed activation bond to close the *prepaid* path's pay-before-open trust gap · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
+| Feature | Status | Evidence | Live / mock | Limitation |
+|---|---|---|---|---|
+| `linked` JIT checkout | Implemented | `npm run demo:linked:e2e`; [`jit.test.ts`](./packages/lsp-server/test/jit.test.ts) | Reproducible mock demo; same package/RPC path verified on testnet | On-chain confirmation latency; shipped Groth16 phase 2 is development-only; merchant reveal fallback remains. |
+| `same_hash` JIT checkout | Implemented | `npm run demo:same-hash:e2e`; [`jitSameHash.test.ts`](./packages/lsp-server/test/jitSameHash.test.ts); [finding #5](./docs/upstream-fiber-findings.md) | Reproducible mock demo; two-node hash behavior verified on testnet | Requires two LSP nodes and durable operational handoff; merchant reveal fallback remains. |
+| Channel-bound streaming rent | Implemented | Both JIT demos; [`streamingLease.test.ts`](./packages/client/test/streamingLease.test.ts) | Mock demos plus live RUSD keysend verification | LSP-side lapse enforcement is not implemented. |
+| Prepaid inbound provisioning | Reference implementation | [`client.test.ts`](./packages/client/test/client.test.ts); [`lsp.test.ts`](./packages/lsp-server/test/lsp.test.ts) | Scripted RPC tests; not part of the focused JIT demos | Pay-before-open trust gap; the demo-only `LSP_TRUST_SETTLE=1` bypass must not be used in production. |
+| Registry + graph discovery | Implemented | [`registry.test.ts`](./packages/registry/test/registry.test.ts); [`discover.test.ts`](./packages/client/test/discover.test.ts) | Static registry and scripted graph tests; graph propagation behavior measured live | Newly announced node capabilities can propagate slowly; registry remains the dependable endpoint source. |
+| Merchant authentication | Implemented, opt-in | [`@fiberlsp/auth`](./packages/auth/README.md); [`middleware.test.ts`](./packages/auth/test/middleware.test.ts); [`scripts/live-features.mjs`](./scripts/live-features.mjs) | Offline middleware suite plus live signed-invoice identity probe | Not mounted by default; operators supply keys, policy storage, composition, and rate limiting. |
+| Invoice webhooks + merchant receipts/CSV | Implemented bricks | [`invoiceWebhooks.test.ts`](./packages/lsp-server/test/invoiceWebhooks.test.ts); [`ledger.test.ts`](./packages/client/test/ledger.test.ts) | Scripted RPC/unit coverage; not exercised by the focused JIT demos | Deployment owns durable storage, webhook retry policy, and accounting integration. |
+| LSP ledger + circular rebalancing | Operational helpers | [`leaseAndLedger.test.ts`](./packages/lsp-server/test/leaseAndLedger.test.ts); [`rebalance.test.ts`](./packages/lsp-server/test/rebalance.test.ts); [`scripts/live-features.mjs`](./scripts/live-features.mjs) | Ledger read and routing RPCs probed live; rebalance submission is dry-run by default | FNN currently omits per-payment amount; a circular route must exist in the live graph. |
+| Cooperative lease close | Operational helper | [`leaseAndLedger.test.ts`](./packages/lsp-server/test/leaseAndLedger.test.ts); gated live check in [`scripts/live-features.mjs`](./scripts/live-features.mjs) | Scripted tests; live close is opt-in because it is irreversible | No automatic LSP-side close after lease lapse. |
+
+Production work remains: a trustworthy multi-party phase 2 for `linked` (or PTLCs), upstream payment-preimage
+exposure, production key/policy management and rate limiting around the optional auth middleware, native LSP
+capability advertisement, an escrowed prepaid activation bond, and upstream interception + zero-conf support
+for sub-second unarranged JIT. See [`ROADMAP.md`](./ROADMAP.md).
 
 ## License
 
