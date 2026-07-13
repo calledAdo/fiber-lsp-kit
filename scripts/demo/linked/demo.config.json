@@ -1,6 +1,8 @@
 {
+  "mode": "linked",
   "release": "https://github.com/calledAdo/fiber-lsp-kit/releases/download/v0.1.0",
-  "lspRest": "http://127.0.0.1:9080",
+  "lspRest": "http://127.0.0.1:9180",
+  "control": { "merchant": 7102, "customer": 7103 },
   "asset": {
     "symbol": "RUSD",
     "decimals": 8,
@@ -17,7 +19,8 @@
   },
   "amounts": {
     "jitPayment": "2000000000",
-    "jitCapacity": "10000000000"
+    "jitCapacity": "10000000000",
+    "customerHoldCapacity": "10000000000"
   },
   "jit": {
     "minPayment": "1",
@@ -25,12 +28,9 @@
     "feeBps": 100,
     "minCapacity": "1000000000"
   },
-  "roles": {
-    "lsp": { "fnn": [], "control": 7001 },
-    "merchant": { "fnn": [], "p2p": "/ip4/127.0.0.1/tcp/8248", "control": 7002 },
-    "customer": { "fnn": [], "control": 7003 }
-  },
-  "mock": {
-    "ports": { "lsp": 9227, "merchant": 9247, "customer": 9237 }
+  "nodes": {
+    "lsp": { "rpc": "" },
+    "merchant": { "rpc": "", "p2p": "" },
+    "customer": { "rpc": "" }
   }
 }

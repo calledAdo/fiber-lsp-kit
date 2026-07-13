@@ -295,6 +295,8 @@ export class FiberChannelRpcClient {
   nodeInfo(): Promise<{
     /** FNN returns the node identity as `pubkey` (verified live, v0.9.0-rc5). */
     pubkey?: string;
+    /** Network genesis/chain identity. Verified live, v0.9.0-rc5. */
+    chain_hash?: string;
     /** Older/aliased fields — kept for forward-compat, but live nodes send `pubkey`. */
     node_id?: string;
     public_key?: string;

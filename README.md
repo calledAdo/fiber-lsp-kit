@@ -15,7 +15,7 @@ conforming implementation.
 | Where to look | For |
 |---|---|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | the design: the FNN constraint, the decisions, the LSPS-Fiber protocol, JIT checkout, discovery, and how it composes |
-| [`scripts/demo/`](./scripts/demo) | the runnable demo: three roles (LSP/merchant/customer), a JIT sale, mock nodes or live |
+| [`scripts/demo/`](./scripts/demo) | two runnable JIT topologies: four-node same-hash and three-node linked, over mock or live FNN nodes |
 | [`docs/upstream-fiber-findings.md`](./docs/upstream-fiber-findings.md) | issue drafts + RFCs for the Fiber team |
 | [`ROADMAP.md`](./ROADMAP.md) · [`AI-USAGE.md`](./AI-USAGE.md) | roadmap · AI usage |
 
@@ -50,30 +50,18 @@ Run the complete flow in one process first:
 
 ```bash
 npm install
-npm run demo:e2e
+npm run demo:same-hash:e2e   # four nodes, one payment hash, no proof artifacts
+npm run demo:linked:e2e      # three nodes, different hashes, real Groth16 proof
 ```
 
-**The demo — three roles, one JIT sale, no `fnn`, no faucet.** LSP, merchant, and customer are each a
-long-running process that logs what it sees. A merchant with **zero channels** takes a sale; where the proving
-key is present the merchant builds a **real Groth16 proof** the LSP verifies live. By default every role uses a
-bundled mock-fnn node. See [`scripts/demo/`](./scripts/demo):
+Both commands use the real package APIs and typed FNN adapter against a bundled mock network by default. They
+are separate entrypoints, not runtime modes: the same-hash scenario owns hold and payment nodes; the linked
+scenario owns one LSP node and downloads any missing proof artifacts from the configured release.
 
-```bash
-npm install
-npm run demo:lsp        # terminal 1 — the LSP (starts the mock nodes + server, narrates each order)
-npm run demo:merchant   # terminal 2 — the merchant (zero channels)
-npm run demo:customer   # terminal 3 — the customer
-npm run demo:invoice    # terminal 4 — merchant proves linkage + prints the hold invoice
-npm run demo:pay        #            — customer pays it → LSP opens a channel, forwards, settles
-```
-
-On a fresh clone the merchant fetches the `linked` proving artifacts from the release with
-`npm run demo:merchant -- --download` (and the LSP its key with `npm run demo:lsp -- --download`); without them
-the demo runs the no-proof `same_hash` mode. Details in [`scripts/demo/README.md`](./scripts/demo/README.md).
-
-**Run it live** by putting a real Fiber node's RPC URL in a role's `fnn` field in
-[`scripts/demo/demo.config.json`](./scripts/demo/demo.config.json) — the commands don't change, and you own
-that node's funding and peering.
+For a multi-terminal run or live testnet nodes, choose a scenario in [`scripts/demo/`](./scripts/demo) and fill
+its `demo.config.json`. A complete node profile runs live; if any required node field is absent, every role
+uses that scenario's mock network. Startup performs only read-only topology checks and never opens the
+customer's prerequisite channel for a live operator.
 
 Other scripts: `npm run build` · `npm test` (offline tests over the real RPC code path) · `npm run server` (the LSP
 + merchant REST API, needs an FNN node).
@@ -136,7 +124,7 @@ order.state; // "channel_active" — it can now RECEIVE RUSD, having never held 
 
 | | |
 |---|---|
-| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce on live nodes via [`scripts/demo/`](./scripts/demo) with real endpoints in `demo.config.json`. |
+| **Fully working, live on CKB testnet** | LSP discovery (registry + gossip graph) · RUSD channel **provisioning** · invoice issuance · **routed multi-hop payment** · server-side `invoice.paid` **webhook** · settlement **ledger** reconcile + CSV · **multi-period streaming rent** (keysend RUSD). Reproduce on live nodes via [`scripts/demo/`](./scripts/demo) with real endpoints in the selected scenario's `demo.config.json`. |
 | **Simulated / reference-grade (on purpose)** | discovery uses the **registry as the default** with the gossip graph as the authentic layer; in the *non-JIT* purchase flow the zero-capital merchant pays the CKB activation fee **out-of-band** (logged, `LSP_TRUST_SETTLE=1`) — the JIT flow needs no fee bootstrap at all; offline tests drive a **scripted RPC transport**; on-chain opens are subject to **testnet confirmation latency** (a JIT payment stays safely held meanwhile — the hold window is the invoice expiry). |
 | **Needed for production** | **for `linked` JIT only, a linkage setup the LSP can trust** — phase 1 is the public Perpetual Powers of Tau, but the circuit-specific phase 2 is a single dev contribution, so `linked` is not yet trustless in practice (running `same_hash` instead removes the setup entirely; a multi-party phase 2, or PTLCs, also removes the dependency) · **`get_payment` must expose the settled preimage** ([finding #4](./docs/upstream-fiber-findings.md)) or the LSP depends on the merchant's `reveal` to recoup the forward · auth + rate-limiting on the LSP REST · native LSP endpoint/capability advertisement in the Fiber graph · an escrowed activation bond to close the *prepaid* path's pay-before-open trust gap · sub-second JIT on unarranged payments (needs upstream HTLC interception + zero-conf). Tracked in [`ROADMAP.md`](./ROADMAP.md). |
 

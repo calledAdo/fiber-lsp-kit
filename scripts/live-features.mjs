@@ -2,25 +2,23 @@
 // REAL FNN testnet nodes. It goes through the same package classes/adapter the mock e2e uses — only the
 // rpcUrls point at live nodes — so it honors the node-agnostic principle.
 //
-//   node scripts/demo/live-features.mjs
+//   node scripts/live-features.mjs
 //
 // SAFE BY DEFAULT: A2 is read-only, B2 dry-runs (prices the route, moves nothing), C2 mints one zero-amount
 // invoice to prove identity. The two IRREVERSIBLE operations are gated behind env flags:
 //   LIVE_CLOSE_CHANNEL=0x<channel_id>   → A1: cooperatively close that one channel (returns funds on-chain)
 //   LIVE_REBALANCE_SUBMIT=1             → B2: actually submit the priced loop (moves real RUSD)
-import { readFileSync } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
-import { udtAsset } from "../../packages/protocol/dist/index.js";
-import { FiberChannelRpcClient } from "../../packages/fiber/dist/index.js";
-import { LspLedger, Rebalancer, needsRebalance, planCircularRebalance } from "../../packages/lsp-server/dist/index.js";
+import { FiberChannelRpcClient } from "../packages/fiber/dist/index.js";
+import { LspLedger, Rebalancer, needsRebalance, planCircularRebalance } from "../packages/lsp-server/dist/index.js";
 import {
   SignedFiberInvoiceVerifier, MemoryChallengeStore, SignedCapabilityService, merchantScopePermission,
-} from "../../packages/auth/dist/index.js";
+} from "../packages/auth/dist/index.js";
+import { loadConfig } from "./demo/linked/config.mjs";
 
-const cfg = JSON.parse(readFileSync(new URL("./demo.config.json", import.meta.url)));
-const rusd = udtAsset(cfg.asset.script, cfg.asset.symbol);
-const dec = 10 ** cfg.asset.decimals;
-const fmt = (v) => `${Number(BigInt(v)) / dec} ${cfg.asset.symbol}`;
+const cfg = loadConfig();
+const rusd = cfg.asset;
+const fmt = cfg.fmt;
 const LSP_URL = process.env.LSP_URL ?? "http://127.0.0.1:8227";
 const MERCHANT_URL = process.env.MERCHANT_URL ?? "http://127.0.0.1:8237";
 
@@ -71,7 +69,7 @@ await step("B2", async () => {
 
   // Routing-capability dry-run: prove build_router + send_payment_with_router work live through our plan
   // builder, using two channels to a peer that DOES forward (a self→peer→self loop), regardless of need.
-  const readyRusd = channels.filter((c) => c.state?.state_name === "ChannelReady" && c.funding_udt_type_script?.code_hash === cfg.asset.script.code_hash);
+  const readyRusd = channels.filter((c) => c.state?.state_name === "ChannelReady" && c.funding_udt_type_script?.code_hash === cfg.assetScript.code_hash);
   const byPeer = new Map();
   for (const c of readyRusd) { const a = byPeer.get(c.pubkey) ?? []; a.push(c); byPeer.set(c.pubkey, a); }
   const pairs = [...byPeer.values()]
@@ -82,8 +80,8 @@ await step("B2", async () => {
   try {
     const [donor, ret] = pairs[0];
     const plan = planCircularRebalance({ starved: ret, donor, lspPubkey: lspInfo.pubkey, amount: 10_000_000n });
-    const router = await lspRpc.buildRouter({ hops: plan.hops, amount: 10_000_000n, udtTypeScript: cfg.asset.script });
-    const priced = await lspRpc.sendPaymentWithRouter({ router, keysend: true, udtTypeScript: cfg.asset.script, dryRun: true });
+    const router = await lspRpc.buildRouter({ hops: plan.hops, amount: 10_000_000n, udtTypeScript: cfg.assetScript });
+    const priced = await lspRpc.sendPaymentWithRouter({ router, keysend: true, udtTypeScript: cfg.assetScript, dryRun: true });
     ok(`build_router priced a ${router.length}-hop self-loop via peer ${donor.pubkey.slice(0, 12)}…; send_payment_with_router dry-run: ${priced.status} (no funds moved)`);
   } catch (e) {
     console.log(`     routing-capability probe: build_router found no routable self-loop on the current graph (${e?.message?.slice(-40) ?? e})`);
@@ -98,7 +96,7 @@ await step("C2", async () => {
   const m = await merchantRpc.nodeInfo();
   const mpk = m.pubkey;
   const challenge = await challenges.issue(mpk);
-  const inv = await merchantRpc.newInvoice({ amount: "1", description: challenge, udtTypeScript: cfg.asset.script, expirySeconds: 3600 });
+  const inv = await merchantRpc.newInvoice({ amount: "1", description: challenge, udtTypeScript: cfg.assetScript, expirySeconds: 3600 });
   ok(`merchant ${mpk.slice(0, 16)}… signed an invoice carrying the challenge`);
 
   const verifier = new SignedFiberInvoiceVerifier({ rpc: merchantRpc, challenges, expectedCurrency: "Fibt" });
@@ -130,7 +128,7 @@ await step("A1", async () => {
   if (!closeId) {
     ok(`${ready.length} Ready channels exist; closeable primitive is rpc.shutdownChannel({ channelId })`);
     console.log(`     NOT closing anything. To test a real cooperative close, re-run with:`);
-    console.log(`       LIVE_CLOSE_CHANNEL=0x<channel_id> node scripts/demo/live-features.mjs`);
+    console.log(`       LIVE_CLOSE_CHANNEL=0x<channel_id> node scripts/live-features.mjs`);
     return;
   }
   const target = ready.find((c) => c.channel_id === closeId);

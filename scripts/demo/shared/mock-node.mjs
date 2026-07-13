@@ -4,33 +4,89 @@
 // open, invoice + keysend payments, and preimage reveal. It moves invoices/channels/preimages around; it does
 // NOT touch the ZK (real prover + real verifier do that above it).
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+
+import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
 
 const sha256 = (hex) => "0x" + createHash("sha256").update(Buffer.from(hex.slice(2), "hex")).digest("hex");
 export const pubkeyFor = (port) => "02" + createHash("sha256").update(`node:${port}`).digest("hex").slice(0, 62);
 const sameScript = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+const connectionKey = (left, right) => [left, right].sort().join("\0");
 
-function moveAcrossChannel(world, receiver, invoice) {
+export function connectMockNodes(world, leftRole, rightRole) {
+  if (!world.registry[leftRole]) throw new Error(`unknown mock node role: ${leftRole}`);
+  if (!world.registry[rightRole]) throw new Error(`unknown mock node role: ${rightRole}`);
+  world.connections.add(connectionKey(leftRole, rightRole));
+}
+
+function connectedNodes(world, role) {
+  return Object.values(world.registry).filter((candidate) =>
+    candidate.role !== role && world.connections.has(connectionKey(role, candidate.role)));
+}
+
+function nodeFromAddress(world, address) {
+  const port = String(address ?? "").match(/\/tcp\/(\d+)/)?.[1];
+  return Object.values(world.registry).find((candidate) => String(candidate.port) === port);
+}
+
+function findChannelRoute(world, sender, receiver, invoice) {
   const amount = BigInt(invoice.amount);
-  const channel = receiver.channels.find((candidate) =>
-    candidate.enabled &&
-    candidate.state.state_name === "ChannelReady" &&
-    sameScript(candidate.funding_udt_type_script, invoice.udt_type_script) &&
-    BigInt(candidate.remote_balance) >= amount);
-  if (!channel) return;
+  const queue = [sender];
+  const previous = new Map([[sender.role, null]]);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current.role === receiver.role) break;
+    for (const channel of current.channels) {
+      if (!channel.enabled || channel.state.state_name !== "ChannelReady") continue;
+      if (!sameScript(channel.funding_udt_type_script, invoice.udt_type_script)) continue;
+      if (BigInt(channel.local_balance) < amount) continue;
+      const peer = Object.values(world.registry).find((candidate) => candidate.pubkey === channel.pubkey);
+      if (!peer || previous.has(peer.role)) continue;
+      previous.set(peer.role, { node: current, channel });
+      queue.push(peer);
+    }
+  }
+  if (!previous.has(receiver.role)) return undefined;
 
-  channel.local_balance = "0x" + (BigInt(channel.local_balance) + amount).toString(16);
-  channel.remote_balance = "0x" + (BigInt(channel.remote_balance) - amount).toString(16);
-  const peer = Object.values(world.registry).find((candidate) => candidate.pubkey === channel.pubkey);
-  const mirror = peer?.channels.find((candidate) => candidate.channel_outpoint === channel.channel_outpoint);
-  if (mirror) {
-    mirror.local_balance = "0x" + (BigInt(mirror.local_balance) - amount).toString(16);
-    mirror.remote_balance = "0x" + (BigInt(mirror.remote_balance) + amount).toString(16);
+  const route = [];
+  let cursor = receiver;
+  while (cursor.role !== sender.role) {
+    const edge = previous.get(cursor.role);
+    route.unshift({ ...edge, peer: cursor });
+    cursor = edge.node;
+  }
+  return route;
+}
+
+function moveAcrossRoute(route, invoice) {
+  const amount = BigInt(invoice.amount);
+  for (const { channel, peer } of route) {
+    channel.local_balance = "0x" + (BigInt(channel.local_balance) - amount).toString(16);
+    channel.remote_balance = "0x" + (BigInt(channel.remote_balance) + amount).toString(16);
+    const mirror = peer.channels.find((candidate) => candidate.channel_outpoint === channel.channel_outpoint);
+    if (!mirror) throw new Error(`mock channel ${channel.channel_outpoint} has no peer mirror`);
+    mirror.local_balance = "0x" + (BigInt(mirror.local_balance) + amount).toString(16);
+    mirror.remote_balance = "0x" + (BigInt(mirror.remote_balance) - amount).toString(16);
   }
 }
 
 /** A shared "network" all nodes are backed by. One per demo run / test. */
 export function createWorld() {
-  return { invoices: new Map(), held: new Map(), registry: {} }; // addr->{hash,amount,preimage?,issuer}; hash->{node}; role->node
+  return { invoices: new Map(), held: new Map(), registry: {}, connections: new Set() }; // addr->{hash,amount,preimage?,issuer}; hash->{node}; role->node
+}
+
+/** Seed the payer's pre-existing funded route to the hold node. No other connection or channel is implied. */
+export function seedCustomerHoldChannel({ world, customerRole, holdRole, amount, assetScript }) {
+  const customer = world.registry[customerRole];
+  const hold = world.registry[holdRole];
+  if (!customer || !hold) throw new Error("customer and hold mock nodes must exist before seeding their channel");
+  connectMockNodes(world, customerRole, holdRole);
+  customer.rpc("open_channel", [{
+    pubkey: hold.pubkey,
+    funding_amount: `0x${BigInt(amount).toString(16)}`,
+    funding_udt_type_script: assetScript ?? null,
+    public: true,
+  }]);
 }
 
 /** Build one node for `role` on `port`, registered into `world.registry`. */
@@ -44,9 +100,14 @@ export function makeNode(world, role, port) {
   const rpc = (method, params) => {
     const p0 = params?.[0] ?? {};
     switch (method) {
-      case "node_info": return { node_id: pubkey, pubkey, addresses: [`/ip4/127.0.0.1/tcp/${port}`] };
-      case "list_peers": return { peers: Object.values(registry).filter((n) => n.role !== role).map((n) => ({ pubkey: n.pubkey })) };
-      case "connect_peer": return {};
+      case "node_info": return { node_id: pubkey, pubkey, chain_hash: "0xmock", addresses: [`/ip4/127.0.0.1/tcp/${port}`] };
+      case "list_peers": return { peers: connectedNodes(world, role).map((n) => ({ pubkey: n.pubkey })) };
+      case "connect_peer": {
+        const peer = nodeFromAddress(world, p0.address);
+        if (!peer) throw new Error(`mock peer not found for address ${p0.address}`);
+        connectMockNodes(world, role, peer.role);
+        return {};
+      }
       case "graph_nodes": return { nodes: Object.values(registry).map((n) => ({ node_id: n.pubkey, addresses: [] })) };
       case "graph_channels": {
         const limit = p0.limit === undefined ? channels.length : Number(BigInt(p0.limit));
@@ -113,7 +174,11 @@ export function makeNode(world, role, port) {
       case "settle_invoice": {
         status.set(p0.payment_hash, "Paid");
         const h = world.held.get(p0.payment_hash);
-        if (h) { h.node.payments.set(p0.payment_hash, { status: "Success", payment_preimage: p0.payment_preimage }); world.held.delete(p0.payment_hash); }
+        if (h) {
+          moveAcrossRoute(h.route, h.invoice);
+          h.node.payments.set(p0.payment_hash, { status: "Success", payment_preimage: p0.payment_preimage });
+          world.held.delete(p0.payment_hash);
+        }
         return {};
       }
       case "cancel_invoice": {
@@ -197,9 +262,12 @@ export function makeNode(world, role, port) {
         }
         const inv = world.invoices.get(p0.invoice);
         if (!inv) return { status: "Failed" };
+        const issuer = registry[inv.issuer];
+        const route = findChannelRoute(world, registry[role], issuer, inv);
+        if (!route) return { status: "Failed", failed_error: "mock could not find a funded channel path" };
+        if (p0.dry_run) return { payment_hash: inv.hash, status: "Created", fee: "0x0" };
         if (inv.preimage) { // a regular merchant invoice: the payer learns the preimage — settled now
-          const issuer = registry[inv.issuer];
-          moveAcrossChannel(world, issuer, inv);
+          moveAcrossRoute(route, inv);
           issuer.setStatus(inv.hash, "Paid");
           payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", payment_preimage: inv.preimage, amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
           return { payment_hash: inv.hash, status: "Success" };
@@ -207,7 +275,7 @@ export function makeNode(world, role, port) {
         // a HOLD invoice: captured and HELD until the issuer settles it
         registry[inv.issuer].setStatus(inv.hash, "Received");
         payments.set(inv.hash, { payment_hash: inv.hash, status: "Inflight", amount: "0x" + BigInt(inv.amount).toString(16) });
-        world.held.set(inv.hash, { node: registry[role] });
+        world.held.set(inv.hash, { node: registry[role], invoice: inv, route });
         return { payment_hash: inv.hash, status: "Inflight" };
       }
       case "get_payment": return payments.get(p0.payment_hash) ?? { status: "Failed" };
@@ -218,4 +286,44 @@ export function makeNode(world, role, port) {
   const node = { role, port, pubkey, rpc, setStatus: (h, s) => status.set(h, s), payments, channels };
   registry[role] = node;
   return node;
+}
+
+export function mockRpcClient(node) {
+  return new FiberChannelRpcClient({
+    rpcUrl: `http://${node.role}`,
+    fetchImpl: async (_url, init) => {
+      const { id, method, params } = JSON.parse(String(init.body ?? "{}"));
+      return { json: async () => ({ jsonrpc: "2.0", id, result: node.rpc(method, params) }) };
+    },
+  });
+}
+
+export function serveMockWorld(world) {
+  const servers = [];
+  for (const node of Object.values(world.registry)) {
+    const server = createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      let id = null;
+      try {
+        const request = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+        id = request.id;
+        const result = node.rpc(request.method, request.params);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+      } catch (error) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32000, message: error instanceof Error ? error.message : String(error) },
+        }));
+      }
+    });
+    server.listen(node.port, "127.0.0.1", () => {
+      console.log(`[mock-fnn] ${node.role.padEnd(9)} http://127.0.0.1:${node.port} (${node.pubkey.slice(0, 14)}...)`);
+    });
+    servers.push(server);
+  }
+  return servers;
 }

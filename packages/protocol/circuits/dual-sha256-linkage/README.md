@@ -32,8 +32,9 @@ tracked:
 - proof/public signal JSON
 - `verification_key.json`
 
-You do not need to build this circuit to run the normal demo (`npm run demo:e2e`) or inspect the JIT protocol.
-Who needs which artifact, what trust each carries, and why to ship them as Release assets (not in git) are in
+You do not need to build this circuit to run the same-hash demo. The linked demo (`npm run demo:linked:e2e`)
+uses a local build when present and otherwise downloads the versioned release artifacts with checksum
+verification. Who needs which artifact, what trust each carries, and why to ship them as Release assets are in
 [`ARCHITECTURE.md` § Artifact distribution](../../../../docs/ARCHITECTURE.md#artifact-distribution).
 
 ## Prerequisites

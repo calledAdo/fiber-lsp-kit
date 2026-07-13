@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const demoScripts = [
-  "../../../scripts/demo/servers/merchant.mjs",
-  "../../../scripts/demo/servers/customer.mjs",
+  "../../../scripts/demo/shared/merchant-server.mjs",
+  "../../../scripts/demo/shared/customer-server.mjs",
 ];
 
 test("demo scripts import FiberChannelRpcClient from the fiber package", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createWorld, makeNode } from "../../../scripts/demo/lib/mock-node.mjs";
+import { createWorld, makeNode } from "../../../scripts/demo/shared/mock-node.mjs";
 
 test("mock parse_invoice returns the live signed proof fields", () => {
   const world = createWorld();
