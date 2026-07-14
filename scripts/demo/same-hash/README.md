@@ -19,9 +19,10 @@ them, and this demo does not create one.
 npm run demo:same-hash:e2e
 ```
 
-It verifies the four distinct nodes, hold-before-open ordering, merchant payment before hold release, absence
-of a hold-to-payment channel, and rent priced from the exact payment-to-merchant channel's live remaining
-inbound capacity.
+The default run uses four distinct mock FNN roles behind the production RPC adapter. It verifies
+hold-before-open ordering, merchant payment before hold release, absence of a hold-to-payment channel, and rent
+priced from the exact payment-to-merchant channel's live remaining inbound capacity. Success output ends with
+the JIT order settled and the rent payment recorded.
 
 ## Multi-terminal run
 

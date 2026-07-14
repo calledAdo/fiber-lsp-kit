@@ -5,7 +5,7 @@
  * each as an interchangeable strategy behind one interface instead of a hardcoded flow:
  *
  *   - DirectReceive — issue over inbound you already have, or top it up first via an injected `ensureInbound`
- *     hook (e.g. `buyInboundFromLsp`). The customer pays a normal invoice on the merchant's own node.
+ *     hook (e.g. `buyInboundFromLsp`). The customer pays a regular invoice on the merchant's own node.
  *   - JitReceive    — no inbound is provisioned ahead of time; the channel opens *on* the paying transaction
  *     via the LSP's hold-to-merchant-invoice linkage. The customer pays the LSP's hold invoice.
  *

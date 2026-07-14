@@ -4,6 +4,9 @@ Optional merchant authentication building blocks for a hosted Fiber LSP. Nothing
 
 The package keeps proof, policy, quota, and token handling behind interfaces. `MerchantCapabilityService` is the token-backend seam. `SignedCapabilityService` is the included implementation and signs compact capability tokens with Ed25519 through `node:crypto`.
 
+This package supplies application-level merchant authentication. It does not configure FNN RPC authentication,
+TLS, rate limiting, key storage, or an operator database.
+
 ## Exports
 
 - `MerchantProofVerifier`, `MerchantCapabilityService`, `MerchantPolicyStore`, `MerchantQuotaProvider`, and `ChallengeStore`

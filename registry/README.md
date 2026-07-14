@@ -1,49 +1,45 @@
-# Fiber LSP provider registry
+# Fiber LSP provider file
 
-`providers.json` is a **public phonebook** of Fiber LSP endpoints — the practical, immediately-orderable
-discovery path for a merchant/wallet. It is a plain file meant to live in GitHub; validate it against
-[`providers.schema.json`](./providers.schema.json).
+[`providers.json`](./providers.json) is a static phonebook of Fiber LSP identities and REST endpoints. It can be
+hosted on Git, downloaded by a merchant, copied into an application, or replaced with a private list. Validate
+changes against [`providers.schema.json`](./providers.schema.json).
 
-## What it is (and is not)
+## Data boundary
 
-The registry carries **only static identity** — enough to *find and reach* a provider:
-
-| Field | | |
+| Field | Requirement | Meaning |
 |---|---|---|
-| `name` | required | human-readable name |
-| `base_url` | required | LSP REST base URL (client appends `/lsp/v1/*`) |
-| `chain` | required | `testnet` \| `mainnet` |
-| `lsp_pubkey` | recommended | Fiber node pubkey — lets a client cross-verify the endpoint and merge with the gossip graph by identity |
-| `operator`, `note` | optional | provenance / free text |
+| `name` | required | human-readable provider name |
+| `base_url` | required | REST base URL; clients append `/lsp/v1/*` |
+| `chain` | required | `testnet` or `mainnet` |
+| `lsp_pubkey` | recommended | FNN identity used to cross-reference graph observations |
+| `operator`, `note` | optional | provenance or short static context |
 
-It deliberately carries **no dynamic data**:
+The file deliberately excludes fees, capacity, channel counts, and JIT terms. Those values change too quickly
+for a static registry:
 
-- **Terms (fees, capacity, min payment, JIT support)** are read **live** from each provider's
-  `GET /lsp/v1/info` (`compareQuotes` does this). A file can't stay honest about prices; the endpoint is the
-  source of truth for terms.
-- **Liquidity and channel topology** are read from the **gossip graph** (`graph_channels` / `graph_nodes`),
-  which is live and on-chain-verifiable. Channel counts open, close, and rebalance constantly, so they never
-  belong in a static file.
+- current provider terms come from `GET /lsp/v1/info`;
+- current LSP-local capacity comes from `GET /lsp/v1/liquidity`;
+- the client's local FNN graph supplies node-signed announcements and public-channel observations.
 
-So the registry answers "*who exists and where*"; the endpoint answers "*what will you charge me right now*";
-the graph answers "*what capacity/topology is live*".
+Gossip data is not an LSP quote or a guarantee of immediately spendable liquidity. It can be delayed, and FNN
+does not currently advertise the provider's REST endpoint. The registry answers "where can I request terms?";
+the endpoint answers "what is offered now?"; the graph is independent network evidence.
 
-## Add your LSP (pull request)
+## Add a provider
 
-1. Stand up an LSPS-Fiber server (`@fiberlsp/server`) in front of your FNN node so `GET /lsp/v1/info`
-   responds.
-2. Add one entry to `providers` with your `name`, `base_url`, `chain`, and (recommended) `lsp_pubkey`.
-3. Keep it static — do **not** add fee/capacity/channel fields; the schema rejects them.
-4. Open a PR. Validate first: any JSON-Schema validator against `providers.schema.json`.
+1. Expose an LSPS-Fiber-compatible `GET /lsp/v1/info` endpoint.
+2. Add `name`, `base_url`, `chain`, and preferably `lsp_pubkey` to `providers.json`.
+3. Do not add dynamic terms or capacity fields; the schema rejects them.
+4. Validate the file against `providers.schema.json` and open a pull request.
 
-## Fork it — merchants keep their own phonebook
+## Operator and merchant control
 
-The registry is a **reproducible artifact, not an owned endpoint**. A merchant can:
+The file is an artifact, not a mandatory service. A merchant can:
 
-- point the SDK straight at this file's raw URL (`fetchRegistry(url)`), or
-- **copy it, trim it to the LSPs they trust, add private ones**, and bundle that, or
-- skip the file entirely and pass an inline provider list to `discoverProviders` / `compareQuotes`.
+- fetch the repository copy with `fetchRegistry(url)`;
+- copy it, remove untrusted providers, and add private providers;
+- pass an inline list to its own application; or
+- skip it and use graph discovery plus an application-defined endpoint resolver.
 
-Discovery merges the registry with the gossip graph **by `lsp_pubkey`**, so an entry that is also seen on the
-graph is marked `sources: ["registry", "graph"]` — registry for the reachable endpoint, graph for the
-authenticated on-chain capability. See [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) (Discovery Model).
+SDK usage and merge semantics are documented in
+[`@fiberlsp/registry`](../packages/registry/README.md).

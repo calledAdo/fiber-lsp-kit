@@ -16,9 +16,15 @@ npm run demo:same-hash:e2e
 npm run demo:linked:e2e
 ```
 
-The one-process checks use the same `FiberChannelRpcClient`, `JitCheckout`, `JitService`, `StreamingLease`,
-prover, and verifier used by a deployed composition. The mock implements the FNN JSON-RPC boundary; it does
-not replace the protocol or proof logic.
+The one-process checks use mock FNN roles by default and the same `FiberChannelRpcClient`, `JitCheckout`,
+`JitService`, `StreamingLease`, prover, and verifier used by a deployed composition. The mock implements the
+FNN JSON-RPC boundary; it does not replace protocol, state-machine, proof, or rent logic. The linked run needs
+network access once if its checksum-verified release artifacts are not cached.
+
+A successful run reports that the hold was funded before channel opening, the merchant was paid before hold
+settlement, the expected channel became ready, and rent was calculated and paid against that channel's current
+remaining inbound. The same-hash run additionally confirms four distinct roles and no hold-to-payment channel;
+the linked run confirms the real proof and public signals.
 
 ## Node source selection
 

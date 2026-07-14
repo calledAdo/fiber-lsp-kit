@@ -1,7 +1,7 @@
 {
   "name": "@fiberlsp/prover-linked",
   "version": "0.0.0",
-  "description": "Groth16 linkage prover for `linked` JIT: witness generation plus any circom-compatible prover binary.",
+  "description": "Merchant Groth16 linkage prover with a bundled WebAssembly default and optional native backend.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

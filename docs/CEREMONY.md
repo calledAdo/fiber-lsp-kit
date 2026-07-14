@@ -15,7 +15,7 @@ assumption, not the merchant's.
 
 > **You may not need any of this.** The proof exists only because a single FNN node cannot hold and pay the same
 > payment hash. An LSP that runs **two** nodes serves `same_hash` instead: one hash on both invoices, no proof, no
-> proving key, no setup, and nothing to trust. See
+> proving key, no setup, and no proof-setup trust. See
 > [`ARCHITECTURE.md` § The hash-lock collision](./ARCHITECTURE.md#the-hash-lock-collision). Everything below
 > applies to `linked` only.
 
@@ -58,9 +58,9 @@ contributor was honest.
         └─▶ sound unless ALL of {Alice, Bob, Carol} kept their entropy AND colluded
 ```
 
-Nobody has to trust anyone else. You only have to trust *yourself*; any observer only has to believe that *one*
-of N people behaved. This is the assumption Zcash, Semaphore, and Tornado rest on. Three to five independent,
-publicly-named contributors is already a categorical improvement over one.
+Soundness requires only one contributor to destroy their entropy. A contributor can trust their own action; an
+outside observer relies on at least one of the publicly identified contributors having done the same. Three to
+five independent contributors is already a categorical improvement over one.
 
 The final **beacon** removes the last contributor's privileged position. Without it, the last participant sees
 every prior contribution and could — in principle — steer the final key. A public, unpredictable value that did
@@ -114,7 +114,7 @@ This applies the beacon, exports `verification_key.json`, runs `zkey verify`, an
 ### Then cut a release
 
 ```bash
-npm run release    # → dist/release/{verification_key.json, linkage.zkey.gz, linkage.wasm, MANIFEST.md, SHA256SUMS}
+npm run release    # -> verification_key.json, linkage.{zkey,ark}.gz, linkage.wasm, MANIFEST.md, SHA256SUMS
 ```
 
 The `MANIFEST.md` records the circuit's `.r1cs` hash and the final `.zkey` hash, binding the released artifacts
@@ -128,6 +128,7 @@ to the ceremony you just ran. See
 - every intermediate `.zkey` and each contributor's attestation
 - the beacon value, its announced source, and the iteration count
 - the final `.zkey` and `verification_key.json` (+ sha256)
+- the deterministically converted `.ark` (+ sha256 and converter version), for the deployed WASM fast path
 
 ## What each party can then check
 
@@ -136,7 +137,7 @@ to the ceremony you just ran. See
 | Anyone | `snarkjs zkey verify <r1cs> <ptau> <final.zkey>` | the key derives from *that* circuit and *that* public ptau, and the published chain is intact and ends in the announced beacon |
 | Anyone | rebuild the circuit, compare the `.r1cs` hash | the circuit is the published source |
 | LSP | sha256 of `verification_key.json` against the transcript | it is verifying against the ceremony's key |
-| Merchant | `sha256sum -c SHA256SUMS` from the release | the `.zkey` and `.wasm` are the released ones |
+| Merchant | `sha256sum -c SHA256SUMS` from the release | the selected `.ark`/`.zkey` and circuit `.wasm` are the released files |
 
 ```bash
 npx --yes snarkjs@0.7.6 zkey verify \
@@ -151,10 +152,9 @@ needs only to believe that **one** contributor was honest.
 Proofs are bound to a circuit and a key. Rotating the key invalidates every proof generated against the old one,
 so:
 
-- **Merchants** must download the new `.zkey` (+ `.wasm` if the circuit changed) and discard any pre-generated
-  proofs they cached off the serving path. `@fiberlsp/prover-linked` keys its converted-key cache to the
-  `.zkey`'s SHA-256, so the cache invalidates itself automatically — a rotated key costs one conversion, not a
-  manual cleanup.
+- **Merchants** must download the new `.ark` fast-path key (or `.zkey` fallback), plus `.wasm` if the circuit
+  changed, and discard pre-generated proofs for the old key. A native deployment converting from `.zkey` keys
+  its cache to that file's SHA-256, so rotation invalidates the converted cache automatically.
 - **LSPs** must swap `verification_key.json` at `LINKED_JIT_VK_PATH`. The vk and the `.zkey` **must be a matched
   pair from the same setup**; mixing them fails every proof, silently.
 - **Both** should expect a window where merchants hold the old key and the LSP the new one. Every proof in that

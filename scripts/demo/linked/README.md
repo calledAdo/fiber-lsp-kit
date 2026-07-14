@@ -20,8 +20,9 @@ Missing proving/verification artifacts are fetched from the release configured i
 [`demo.config.json`](./demo.config.json), checked against `SHA256SUMS`, and cached under `scripts/demo/.artifacts`.
 Startup fails if they cannot be obtained; it never changes to a different JIT mechanism.
 
-The run verifies the real proof, hold-before-open ordering, merchant payment before hold release, and rent
-priced and paid against the exact channel opened for the checkout.
+The default run uses three mock FNN roles behind the production RPC adapter. It verifies the real proof,
+hold-before-open ordering, merchant payment before hold release, and rent priced and paid against the exact
+channel opened for the checkout. Success output ends with the JIT order settled and the rent payment recorded.
 
 ## Multi-terminal run
 

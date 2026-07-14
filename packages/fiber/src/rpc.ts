@@ -353,7 +353,7 @@ export class FiberChannelRpcClient {
     description?: string;
     udtTypeScript?: UdtTypeScript;
     expirySeconds?: number;
-    /** Preimage this node will settle with (normal invoice, caller-chosen preimage). */
+    /** Preimage this node will settle with (regular invoice, caller-chosen preimage). */
     paymentPreimage?: string;
     /** Hash-only ⇒ hold invoice; this node cannot settle until told the preimage. */
     paymentHash?: string;
