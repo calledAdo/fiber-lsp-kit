@@ -42,8 +42,8 @@ export interface CreateJitOrderRequest {
   target_pubkey: string;
   /**
    * Multiaddr the LSP can `connect_peer` to. Required: the LSP funds the channel and so must open an OUTBOUND
-   * session to the acceptor — the one session FNN's inbound-no-channel protection won't evict mid-open (see
-   * docs/upstream-fiber-findings.md #11). Relying on an ambient inbound session is exactly what fails.
+   * session to the acceptor — the path verified against FNN v0.9.0-rc5's inbound-peer behavior (see
+   * docs/upstream-fiber-findings.md #12). The target address also avoids depending on ambient connectivity.
    */
   target_address: string;
   /** Channel asset (payment, fee and channel are all denominated in it). */

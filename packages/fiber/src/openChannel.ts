@@ -49,8 +49,9 @@ export interface OpenChannelAndAwaitArgs {
   abandonOrphanOnTimeout?: boolean;
   /**
    * Re-establish the session and retry `open_channel` when it fails with FNN's "feature not found / waiting for
-   * Init" error. This is the JIT-to-a-brand-new-node case (see upstream finding #11): the acceptor has no
-   * channel yet, so FNN's inbound-no-channel protection evicts/flaps the session and clears its exchanged
+   * Init" error. This is the JIT-to-a-brand-new-node case observed on FNN v0.9.0-rc5 (see upstream finding
+   * #12): the acceptor has no channel yet, so that release's inbound-no-channel protection evicts/flaps the
+   * session and clears its exchanged
    * `features`, and `open_channel`'s `check_feature_compatibility` then rejects. A fresh `connect_peer`
    * (save=false, so it doesn't feed the saved-peer reconnect flapping) re-exchanges `Init`; firing `open_channel`
    * immediately after lands the funding handshake inside the ~30s window, and once the channel is pending the
@@ -61,7 +62,7 @@ export interface OpenChannelAndAwaitArgs {
   featureRetryAttempts?: number;
 }
 
-/** FNN's rejection when the acceptor's `Init`/features aren't in `peer_session_map` (upstream finding #11). */
+/** FNN rc5's rejection when the acceptor's `Init`/features aren't in `peer_session_map` (finding #12). */
 function isFeatureMiss(e: unknown): boolean {
   return /feature not found|waiting for peer to send Init/i.test(String((e as Error)?.message ?? e));
 }

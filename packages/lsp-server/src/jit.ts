@@ -178,8 +178,8 @@ export class JitService {
 
   private async createOrderLocked(req: CreateJitOrderRequest): Promise<JitOrder> {
     if (!req.target_address) {
-      // The LSP must open an outbound session to fund the channel; without a dialable address it cannot (see
-      // docs/upstream-fiber-findings.md #11). Reject early rather than fail deep in the open with a cryptic error.
+      // The LSP needs a dialable address for the rc5-compatible outbound-open path (see upstream finding #12).
+      // Reject early rather than fail deep in the open with a cryptic error.
       throw new JitError("missing_target_address", "target_address is required: the LSP needs a multiaddr to dial the acceptor");
     }
     const mode = this.resolveMode(req);
@@ -533,8 +533,9 @@ export class JitService {
       pollIntervalMs: this.cfg.pollIntervalMs,
       sleep: this.cfg.sleep,
       abandonOrphanOnTimeout: true,
-      // The acceptor is a brand-new no-channel node; FNN evicts/flaps its session and clears its features,
-      // so refresh the session and retry on the "feature not found" rejection (upstream finding #11).
+      // FNN rc5 could evict/flap a new no-channel peer and clear its features, so refresh and retry on the
+      // "feature not found" rejection (upstream finding #12). Newer releases require a fresh compatibility
+      // probe.
       reconnectOnFeatureMiss: true,
     });
     return ready?.channel_outpoint ?? undefined;

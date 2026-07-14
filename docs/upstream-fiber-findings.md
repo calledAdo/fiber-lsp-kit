@@ -1,17 +1,30 @@
-# Upstream FNN findings (issue drafts)
+# Upstream FNN findings
 
-While building Fiber LSP Kit we drove four live FNN nodes (v0.9.0-rc5) on CKB testnet through the full
-channel-opening, streaming-rent, and hold-invoice JIT paths, and hit several rough edges and missing surfaces worth reporting
-upstream. These are **drafts** to file at [nervosnetwork/fiber](https://github.com/nervosnetwork/fiber);
-each has a minimal repro.
+While building Fiber LSP Kit we drove four live FNN nodes (`v0.9.0-rc5`) on CKB testnet through channel
+opening, streaming rent, hold-invoice JIT, graph discovery, and routed-payment probes. This document contains
+only confirmed runtime bugs, concrete integration-DX observations, and proposals for unavailable capabilities.
 
-The bug repros were measured on **v0.9.0-rc5**; re-verify against the target release before filing. The
-upstream-state notes below (RPC surfaces, roadmap items) were re-checked against the **`develop`** branch on
-2026-07-10.
+The live reproductions remain scoped to **`v0.9.0-rc5`**. Current availability was re-audited on 2026-07-14
+against official `develop` commit
+[`04e091b`](https://github.com/nervosnetwork/fiber/commit/04e091b08953368aa5ee977f562ad628c3000ff4)
+and the generated RPC documentation at that commit. Source inspection is used to establish API availability
+and version context; it is never used by itself to claim that a runtime bug occurs or has been fixed.
+
+- **Confirmed bug:** reproduced against live FNN nodes. The claim applies only to the named node version.
+- **Confirmed DX observation:** measured through live RPCs or directly visible in the public API/documentation.
+- **Proposal:** current source/docs show that the requested capability is unavailable; no runtime bug is implied.
 
 ---
 
 ## 1. Redundant `connect_peer` can crash the acceptor's gossip actor (`ActorAlreadyRegistered`)
+
+**Type:** confirmed bug.
+
+**Evidence:** reproduced on live `v0.9.0-rc5` nodes by dialing an already-connected peer twice, followed by the
+`ActorAlreadyRegistered` panic and failed `open_channel` feature check described below.
+
+**Version note:** current `develop` has substantially different peer-connect/reconnect handling. Retest before
+filing against a newer release; this document does not claim the bug still occurs there.
 
 **Severity:** medium (node-side panic; recoverable by restart, but a single client action triggers it)
 
@@ -35,6 +48,15 @@ paths) calls `list_peers` first and skips `connect_peer` when already peered.
 
 ## 2. A UDT `open_channel` funded *below* the acceptor's `auto_accept_amount` stalls silently
 
+**Type:** confirmed DX observation.
+
+**Evidence:** reproduced on live `v0.9.0-rc5` testnet nodes with 5 RUSD below a 10 RUSD auto-accept floor;
+the opener remained in `NegotiatingFunding`, while 10 RUSD reached `ChannelReady`.
+
+**Current availability:** current FNN documents the floor, logs that a below-floor request awaits manual
+acceptance, and exposes pending channels to the acceptor. The opener still receives no machine-readable
+"not auto-accepted" result, so automation must preflight the announced floor or time out.
+
 **Severity:** medium (poor DX; the opener gets no error, only an indefinite `NegotiatingFunding`)
 
 **What happens.** `is_udt_type_auto_accept` (in `ckb/contracts.rs`) accepts only when
@@ -55,9 +77,12 @@ minimum for this asset"), rather than an open-ended pending state.
 
 ---
 
-## 3. (enhancement) Advertise LSP-provider capability natively in the gossip graph
+## 3. Advertise LSP-provider capability natively in the gossip graph
 
-**Type:** feature proposal / RFC (not a bug)
+**Type:** proposal.
+
+**Availability evidence:** the audited `NodeAnnouncement` carries node-signed addresses, features, and UDT
+configuration, but no LSP-service flag or REST endpoint. This is an absent capability, not a runtime bug.
 
 **Motivation.** Fiber already gossips most of what a client needs to *discover* a liquidity provider. Each
 node announcement (`graph_nodes` → `NodeInfo`) carries `addresses`, `auto_accept_min_ckb_funding_amount`,
@@ -83,9 +108,10 @@ node announcement carrying an LSP descriptor: `{ endpoint, assets[], min/max, fe
 needs only `graph_nodes` — no registry, no convention. Price stays advisory: clients still confirm the live
 quote against the endpoint before ordering.
 
-**Security / spam.** Node announcements are signed by the node key, so the Sybil cost is running a real
-node; bounding the descriptor size and treating advertised fees as non-binding (confirmed live) keeps the
-surface small. This mirrors how the graph already trusts `udt_cfg_infos`.
+**Security / spam.** A node-announcement signature binds the descriptor to a node key; it does not establish
+reputation, uniqueness, or available capital. Bound the descriptor size, treat advertised fees as non-binding,
+and let clients apply their own allowlists/reputation before requesting live terms. This matches how
+`udt_cfg_infos` should be consumed today.
 
 **Why it's implement-ready on the client side.** Fiber LSP Kit's discovery already reads `graph_nodes` for
 capability (`discoverFromGraph`) and is written to honour exactly such a flag the moment it lands — a
@@ -94,7 +120,7 @@ graph capability with registry endpoints today and would collapse onto the graph
 
 ---
 
-### Also worth documenting (DX, not bugs)
+### Additional live-confirmed setup observations
 
 - **Dialing an unannounced peer needs `/p2p/<peer-id>`**, where `peer-id = base58btc(0x1220 ‖
   sha256(33-byte compressed pubkey))` — not the hex node pubkey. A bare transport multiaddr connects but
@@ -105,6 +131,15 @@ graph capability with registry endpoints today and would collapse onto the graph
 ---
 
 ## 4. `get_payment` does not expose the settled payment's preimage
+
+**Type:** confirmed DX observation.
+
+**Evidence:** on live `v0.9.0-rc5`, a successful outgoing payment's `get_payment` result omitted the preimage;
+an armed `subscribe_store_changes` listener received `PutPreimage`, while a later subscriber could not replay
+the settled event.
+
+**Current availability:** the audited `GetPaymentCommandResult` still omits the preimage. The opt-in
+`subscribe_store_changes` module still emits live `PutPreimage` events without a cursor or replay API.
 
 **Severity:** medium (durable value exists but has no replayable/readable RPC surface)
 
@@ -129,6 +164,15 @@ authenticated `get_preimage(payment_hash)` read. Either closes the restart/disco
 ---
 
 ## 5. One node holding and paying the same hash silently loses funds; the error names it `HoldTlcTimeout`
+
+**Type:** confirmed bug.
+
+**Evidence:** reproduced end to end on live `v0.9.0-rc5` testnet nodes: the local outbound payment succeeded,
+the local held invoice changed to `Paid`, and the original payer failed with `HoldTlcTimeout`, producing the
+balance loss described below.
+
+**Version note:** current source has new received-hold settlement logic. Retest on a newer release; source
+inspection alone cannot establish whether the runtime ordering or loss still occurs.
 
 **Severity:** medium (silent fund loss on the paying node; the misleading code hides why)
 
@@ -159,7 +203,17 @@ the merchant preimage). That is the `same_hash` JIT mode, and it is why it needs
 
 ---
 
-## 6. (docs) A hold invoice's hold window is its *expiry* — `DEFAULT_HOLD_TLC_TIMEOUT` is MPP-only
+## 6. A hold invoice's hold window is its *expiry* — `DEFAULT_HOLD_TLC_TIMEOUT` is MPP-only
+
+**Type:** confirmed DX observation.
+
+**Evidence:** on live `v0.9.0-rc5`, a held TLC survived beyond seven minutes and settled successfully after
+155 seconds; cancellation after `Received` also worked when the same node was not holding and paying the hash.
+The public hold-invoice and `cancel_invoice` pages disagree about the allowed cancellation states.
+
+**Current availability:** current channel code derives the deadline from `min(invoice expiry, TLC expiry)`.
+The generated `cancel_invoice` page still says only `Open` can be cancelled, while the implementation rejects
+only `Paid` and `Cancelled` and therefore accepts `Received` and `Expired`.
 
 **Severity:** docs
 
@@ -173,7 +227,7 @@ partial sets on preimage-known invoices.
 hold-invoice provisioning (a JIT channel's on-chain open takes minutes) viable — but the window semantics are
 undocumented and the constant's name invites the wrong conclusion.
 
-**Upstream state (checked against `develop`, 2026-07-10).** The RPC README now *does* document the basic
+**Upstream state (checked against `develop`, 2026-07-14).** The RPC README now *does* document the basic
 hold-invoice lifecycle — a `payment_hash`-only invoice as a hold invoice ("the tlc must be accepted and held
 until the preimage becomes known"), `settle_invoice` / `cancel_invoice`, and the `Received` status. So the
 lifecycle half of this finding is largely addressed. What is still undocumented is the **window**.
@@ -192,7 +246,12 @@ it across FNN versions without a live check.
 
 ---
 
-## 7. (RFC sketch) HTLC interception + zero-conf channels ⇒ sub-second JIT
+## 7. HTLC interception and zero-confirmation channels for subsecond JIT
+
+**Type:** proposal.
+
+**Availability evidence:** no intermediary TLC-interception RPC or zero-confirmation channel option exists in
+the audited source. This proposes new behavior rather than reporting a runtime failure.
 
 Our kit ships JIT channels at *checkout latency* by holding the payer's funds in a hold invoice while the
 channel opens on-chain (see `ARCHITECTURE.md`). Matching Lightning LSPS2's *sub-second* JIT for a
@@ -205,36 +264,50 @@ the payer's wallet.
 
 ---
 
-## 8. (enhancement) No push notifications for invoice / channel / payment state ⇒ everything must poll
+## 8. Add typed, replayable invoice, channel, and payment lifecycle subscriptions
 
-**Severity:** low (works, but forces polling loops in every integrator)
+**Type:** proposal.
 
-**What happens.** FNN exposes no *first-class* event surface for the transitions integrators care about.
-There is a low-level `subscribe_store_changes` / `unsubscribe_store_changes` WebSocket stream (oriented at
-raw store changes and CCH integration), but no clean "notify me when this invoice becomes `Received`/`Paid`",
-"when this channel reaches `ChannelReady`", or "when this payment settles/fails" API. So any process that
-reacts to those transitions (our `JitService`: hold detection, channel-ready detection, forward-settlement
-detection) still must **poll** the relevant `get_invoice` / `list_channels` / `get_payment` on an interval —
-the store-change stream isn't a usable substitute for these.
+**Availability evidence:** FNN has low-level `subscribe_store_changes`, including invoice-status,
+payment-session, attempt, and preimage records, but no stable typed lifecycle contract, replay cursor, or
+channel-ready event. The kit uses the preimage event where its shape is sufficient and polls public RPC state
+for the other transitions.
 
-**Why it matters.** Polling is workable (parked `await`s, batchable into one shared watcher across orders),
-but it's needless RPC load and latency, and every integrator re-implements the same loops. An event stream
-would let JIT/streaming flows be event-driven and delete the loops entirely.
+**Severity:** low (works, but leaves lifecycle consumers on raw internal events plus polling)
 
-**Ask.** Add a subscription/notification surface — e.g. a WebSocket or long-poll `subscribe` for invoice,
-channel, and payment state transitions (Lightning's `invoicestream` / channel-event feeds are the model).
+**What happens.** `subscribe_store_changes` can report raw invoice-status, payment-session, payment-attempt, and
+preimage writes. It is useful for low-latency observation (the kit consumes `PutPreimage`), but it is not in the
+generated public RPC reference, has no cursor/replay, and emits no channel-ready store change. A consumer can
+couple itself to the raw enum to reduce invoice/payment polling, but still needs `list_channels` polling and a
+reconciliation read after disconnects.
+
+**Why it matters.** Polling is workable (parked `await`s, batchable into one shared watcher across orders), but
+the current split forces each integrator to decide which internal changes are safe to consume and how to repair
+missed events. A public lifecycle stream would reduce RPC load without making correctness depend on an
+unreplayable internal feed.
+
+**Ask.** Promote stable invoice, channel, and payment lifecycle events to a documented subscription with a
+cursor/replay or an explicit snapshot-then-subscribe contract.
 
 ---
 
-## 9. (docs/enhancement) `list_payments` / `get_payment` don't return `amount` or `udt_type_script`
+## 9. `list_payments` / `get_payment` don't return `amount` or `udt_type_script`
+
+**Type:** confirmed DX observation.
+
+**Evidence:** live `v0.9.0-rc5` `list_payments` and `get_payment` responses for settled UDT payments omitted
+both amount and asset while retaining status and fee.
+
+**Current availability:** the audited `GetPaymentCommandResult` still has no amount or asset. Internal
+`PaymentSession.request` retains both values, so the omission remains in the RPC projection.
 
 **Severity:** low-medium (blocks node-level accounting; workaround exists via invoices)
 
 **What happens.** Probed live against v0.9.0-rc5 (testnet, 2026-07-12): both `list_payments` and
 `get_payment` return `{ payment_hash, status, created_at, last_updated_at, failed_error, fee,
 custom_records }` for every payment observed — including settled UDT payments — with **no `amount` and no
-`udt_type_script` field**, even though the Payment API docs describe/imply them. `fee` and `status` are
-present and reliable.
+`udt_type_script` field**. Current generated docs accurately list the reduced result, but the send request and
+internal `PaymentSession.request` retain the omitted values. `fee` and `status` are present and reliable.
 
 **Why it matters.** A node's own payment ledger is the natural place to reconcile what an LSP (or any
 integrator) has actually paid out — total forwarded per asset, fees earned, a P&L — without maintaining a
@@ -250,7 +323,12 @@ ledger is self-sufficient for accounting.
 
 ---
 
-## 9. (RFC sketch) PTLCs would make single-node atomic JIT trivially trustless
+## 10. PTLCs would remove the single-node linkage proof
+
+**Type:** proposal.
+
+**Availability evidence:** the audited invoice/TLC types still use hash locks and `HashAlgorithm`; no
+point-lock or adaptor-signature TLC is implemented. This is a protocol proposal, not a runtime bug.
 
 **Severity:** low (enhancement; unlocks a cleaner construction)
 
@@ -266,19 +344,28 @@ and fulfilling A (revealing `a`) automatically yields the opener of B (`a + t`).
 elliptic-curve check, no SNARK, no bond. Single-node JIT (and cross-currency swaps, and multi-hop privacy)
 all get simpler.
 
-**Upstream state (checked 2026-07-10).** Fiber already lists the HTLC→PTLC migration in its cross-chain-hub
+**Upstream state (checked 2026-07-14).** Fiber already lists the HTLC→PTLC migration in its cross-chain-hub
 future plan ([discussion #1243](https://github.com/nervosnetwork/fiber/discussions/1243)) and is keeping the
 CCH interface hash-algorithm-agnostic to ease it — but it is **not implemented**: the `develop` TLC types are
 still hash locks (`payment_hash` + `HashAlgorithm ∈ { CkbHash, Sha256 }`), and there is no adaptor-signature
 lock. So the direction is acknowledged; the work is not yet done.
 
-**Ask.** Prioritize adaptor-signature TLCs. Single-node trustless JIT (above) is one concrete construction
+**Ask.** Prioritize adaptor-signature TLCs. Proof-free single-node JIT (above) is one concrete construction
 that a point-lock unlocks — the A↔B linkage collapses from a Groth16 proof to a one-line `B − A = t·G` check.
 Bitcoin Lightning is making the same HTLC→PTLC move; CKB's Schnorr-friendly stack makes it natural here too.
 
 ---
 
-## 10. `node_announcement` propagation lags `channel_announcement`, so a new node is undiscoverable by capability
+## 11. `node_announcement` propagation lagged `channel_announcement` on rc5
+
+**Type:** confirmed bug.
+
+**Evidence:** reproduced on live `v0.9.0-rc5` testnet nodes: the channel announcement propagated within
+minutes, while the same node remained absent from directly connected peers' `graph_nodes` for more than
+15 minutes.
+
+**Version note:** current `develop` broadcasts a node announcement on peer connection when announced addresses
+are configured. Retest on a newer release; this document does not claim the rc5 propagation bug persists.
 
 **Severity:** medium (breaks graph-based discovery of a newly-online provider)
 
@@ -298,14 +385,23 @@ propagate very differently.
 `udt_cfg_infos`/addresses, so `discoverFromGraph`-style capability discovery cannot surface N at all. A newly
 announced LSP is therefore not graph-discoverable for a long time, even though it is fully operational and
 orderable via its REST endpoint immediately. (This is the concrete reason our SDK treats the static registry as
-the default discovery path and the gossip graph as a slower, authenticating layer — see finding #3.)
+the default discovery path and the gossip graph as a slower, node-signed corroborating layer — see finding #3.)
 
 **Ask.** Re-broadcast `node_announcement` more eagerly — at least when a node's first `channel_announcement`
 becomes relayable and on new peer connections — and/or relay a buffered `node_announcement` to peers once the
 supporting channel is known, so capability discovery converges on roughly the same timescale as channel
 discovery. Relates to #3 (native LSP capability advertisement) and #8 (no push/subscription surface).
 
-## 11. Inbound no-channel-peer protection makes an LSP unable to open a JIT channel to a brand-new node
+## 12. Inbound no-channel-peer protection blocked an rc5 JIT open to a brand-new node
+
+**Type:** confirmed bug.
+
+**Evidence:** reproduced with byte-identical live `v0.9.0-rc5` nodes: both peers reported a connection, but
+the funder's `open_channel` failed with `feature not found`; logs showed the fresh no-channel session being
+evicted and reconnecting repeatedly. The shipped reconnect workaround then completed the JIT flow live.
+
+**Version note:** current peer admission, pending-channel persistence, and reconnect code has materially
+changed. Retest before filing against a newer release; the confirmed claim remains scoped to rc5.
 
 **Symptom.** An LSP (funder) tries to `open_channel` to a freshly-started node that has **no channel yet** — the
 exact case JIT/LSP provisioning targets. It fails with:
@@ -348,31 +444,3 @@ also needs to advertise a dialable multiaddr (`target_address` on the JIT order)
 dial. Verified live end-to-end on testnet: a merchant node with zero channels received a JIT-opened channel and
 a settled payment. This works around the symptom but doesn't fix the underlying eviction — the upstream ask
 above still stands.
-
-## 12. Circular rebalancing is expressible, but routed-payment RPC shapes differ from the docs summary
-
-**Context.** An LSP can recover local balance without an on-chain channel open by paying itself around a loop:
-leave through a donor channel, traverse the network, and return through the starved channel. We probed
-`graph_channels`, `build_router`, and `send_payment_with_router` against FNN v0.9.0-rc5 on testnet before
-building the operator primitive; no non-dry-run routed payment was submitted live.
-
-**Observed live shape.** `graph_channels` accepts `{ limit?: U64Hex, after?: cursor }` and returns
-`{ channels, last_cursor }`. Each edge exposes `node1`, `node2`, `capacity`, `udt_type_script`, and a directional
-update for each endpoint containing `enabled`, `outbound_liquidity`, TLC policy, and `fee_rate`.
-`build_router` accepts `hops_info: [{ pubkey, channel_outpoint? }]`, a top-level `amount`, and an optional
-`udt_type_script`; it returns `{ router_hops: [{ target, channel_outpoint, amount_received,
-incoming_tlc_expiry }] }`. Pinning the first and last channel outpoints successfully built a two-channel
-`self -> peer -> self` RUSD loop. The same loop using only pubkeys returned `no path found`.
-
-`send_payment_with_router` does **not** accept the enclosing build response as `router`: it accepts the
-`router_hops` array itself. UDT routes also need `udt_type_script`. Without `keysend`, `payment_hash` is required;
-with `keysend: true`, FNN generates the hash/preimage, which makes invoice-free circular self-payment possible.
-`dry_run: true` returned a priced `Created` payment and left both channel balances unchanged.
-
-**Effect.** Circular rebalancing is available in this node release, but callers must preserve explicit channel
-selection and pass the asset again at send time. Treating `router` as an opaque object, omitting the UDT script,
-or relying on ordinary shortest-path routing makes an otherwise valid loop fail.
-
-**Kit behavior.** `FiberChannelRpcClient` now pins these live shapes. `Rebalancer` is a standalone operational
-tool: it detects starved channels, selects a donor that remains above the configured floor, builds the explicit
-loop, and defaults to dry-run. It is intentionally not an automatic JIT or lease side effect.
