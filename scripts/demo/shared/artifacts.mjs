@@ -19,20 +19,22 @@ function fetchRelease(role, release, outDir) {
 }
 
 /**
- * Resolve the artifact paths a linked-scenario role needs. Uses a local circuit build when present; otherwise
- * downloads the configured release and throws if the required files cannot be obtained.
+ * Resolve the artifact paths a linked-scenario role needs. Reuses the demo cache first, then a local circuit
+ * build, then downloads the configured release and throws if the required files cannot be obtained.
  */
-export async function ensureArtifacts(role, cfg) {
+export async function ensureArtifacts(role, cfg, options = {}) {
   const need = NEED[role] ?? [];
-  const present = Object.fromEntries(need.map((k) => [k, cfg.artifactsAbs[k]]));
-  const missing = need.filter((k) => !existsSync(present[k]));
-  if (missing.length === 0) return present;
+  const outDir = options.outDir ?? join(repoRoot, "scripts/demo/.artifacts");
+  const cached = Object.fromEntries(need.map((k) => [k, join(outDir, RELEASE_FILE[k])]));
+  if (need.every((k) => existsSync(cached[k]))) return cached;
+
+  const built = Object.fromEntries(need.map((k) => [k, cfg.artifactsAbs[k]]));
+  if (need.every((k) => existsSync(built[k]))) return built;
 
   if (!cfg.release) throw new Error(
-    `[${role}] missing linked artifacts (${missing.join(", ")}) and the scenario config "release" is empty`,
+    `[${role}] linked artifacts are incomplete in both the demo cache and configured build output, and the scenario config "release" is empty`,
   );
-  const outDir = join(repoRoot, "scripts/demo/.artifacts");
-  await fetchRelease(role, cfg.release, outDir);
+  await (options.fetchRelease ?? fetchRelease)(role, cfg.release, outDir);
   const got = Object.fromEntries(need.map((k) => [k, join(outDir, RELEASE_FILE[k])]));
   const stillMissing = need.filter((k) => !existsSync(got[k]));
   if (stillMissing.length) throw new Error(`download did not produce: ${stillMissing.join(", ")}`);
