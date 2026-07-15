@@ -2,6 +2,7 @@ services:
   - type: web
     name: fiber-lsp-kit-demo
     runtime: node
+    plan: free
     buildCommand: npm ci && npm run build && npm run demo:hosted:artifacts
     startCommand: npm run demo:hosted
     healthCheckPath: /health

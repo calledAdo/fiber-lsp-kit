@@ -106,6 +106,7 @@ test("hosted demo has one reproducible Render web service", () => {
 
   const manifest = readFileSync(new URL("../../../render.yaml", import.meta.url), "utf8");
   assert.match(manifest, /type:\s*web/);
+  assert.match(manifest, /plan:\s*free/);
   assert.match(manifest, /buildCommand:\s*npm ci && npm run build && npm run demo:hosted:artifacts/);
   assert.match(manifest, /startCommand:\s*npm run demo:hosted/);
   assert.match(manifest, /healthCheckPath:\s*\/health/);
