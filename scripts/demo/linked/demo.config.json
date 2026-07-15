@@ -2,7 +2,8 @@
   "mode": "linked",
   "release": "https://github.com/calledAdo/fiber-lsp-kit/releases/download/v0.1.0",
   "lspRest": "http://127.0.0.1:9180",
-  "control": { "merchant": 7102, "customer": 7103 },
+  "ckbRpc": "",
+  "control": { "merchant": 7102, "customer": 7103, "dashboard": 7104 },
   "asset": {
     "symbol": "RUSD",
     "decimals": 8,
@@ -17,9 +18,9 @@
     "zkey": "packages/protocol/circuits/dual-sha256-linkage/build/linkage.ark",
     "wasm": "packages/protocol/circuits/dual-sha256-linkage/build/dual_sha256_linkage_js/dual_sha256_linkage.wasm"
   },
-  "amounts": {
-    "jitPayment": "2000000000",
-    "jitCapacity": "10000000000",
+  "e2eFixtures": {
+    "paymentAmount": "2000000000",
+    "channelCapacity": "10000000000",
     "customerHoldCapacity": "10000000000"
   },
   "jit": {

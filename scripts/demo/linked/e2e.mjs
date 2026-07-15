@@ -13,6 +13,7 @@ import {
   demoJitTerms,
   demoOffering,
   runJitSale,
+  runRegularSale,
   runRentPeriods,
 } from "../shared/e2e-flow.mjs";
 import { createWorld, makeNode, mockPreimageSource, mockRpcClient, seedCustomerHoldChannel } from "../shared/mock-node.mjs";
@@ -38,7 +39,7 @@ seedCustomerHoldChannel({
   world,
   customerRole: "customer",
   holdRole: "lsp",
-  amount: cfg.amounts.customerHoldCapacity,
+  amount: cfg.e2eFixtures.customerHoldCapacity,
   assetScript: cfg.assetScript,
 });
 const rpc = Object.fromEntries(Object.entries(nodes).map(([role, node]) => [role, mockRpcClient(node)]));
@@ -67,12 +68,13 @@ const checkout = new JitCheckout({
   rpc: rpc.merchant,
   lsp: lspClient,
   merchantPubkey: nodes.merchant.pubkey,
-  merchantAddress: cfg.peerAddress("merchant", nodes.merchant.pubkey),
+  merchantAddress: `/ip4/127.0.0.1/tcp/${nodes.merchant.port}`,
   mode: "linked",
   proveLinkage: (holdHash, merchantPaymentHash, secret) => prover(holdHash, merchantPaymentHash, secret),
 });
 
 console.log("Linked JIT E2E (three nodes, Groth16 linkage)");
 const flow = await runJitSale({ cfg, terms, checkout, customerRpc: rpc.customer, merchantRpc: rpc.merchant });
+await runRegularSale({ cfg, customerRpc: rpc.customer, merchantRpc: rpc.merchant });
 await runRentPeriods({ cfg, lease: flow.lease });
-console.log("PASS: linked three-node JIT checkout and channel-bound live-capacity rent");
+console.log("PASS: linked JIT checkout, repeat routed payment, and channel-bound live-capacity rent");

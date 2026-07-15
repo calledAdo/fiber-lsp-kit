@@ -11,3 +11,10 @@ export function loadState(cfg, key) {
   if (!existsSync(file)) return undefined;
   return JSON.parse(readFileSync(file, "utf8"));
 }
+
+export function updateState(cfg, key, patch) {
+  const current = loadState(cfg, key) ?? {};
+  const next = { ...current, ...patch };
+  saveState(cfg, key, next);
+  return next;
+}

@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { demoConsole } from "./console.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,13 +44,14 @@ export function createDemoRuntime(cfg) {
     },
 
     startReferenceComposition(extraEnv) {
+      mkdirSync(cfg.stateDir, { recursive: true });
       const child = spawn(process.execPath, [join(cfg.repoRoot, "examples", "reference-lsp", "server.mjs")], {
         stdio: "inherit",
         env: {
           ...process.env,
           PORT: String(new URL(cfg.lspRest).port),
-          LSP_TRUST_SETTLE: "1",
           JIT_LOG: "1",
+          JIT_STORE_PATH: join(cfg.stateDir, "jit-orders.json"),
           READY_POLL_ATTEMPTS: cfg.topology.profile === "mock" ? "50" : "150",
           READY_POLL_INTERVAL_MS: cfg.topology.profile === "mock" ? "50" : "5000",
           ...(cfg.jit?.minPayment !== undefined ? { JIT_MIN_PAYMENT: String(cfg.jit.minPayment) } : {}),
@@ -60,7 +63,7 @@ export function createDemoRuntime(cfg) {
       });
       children.push(child);
       child.on("close", (code) => {
-        console.log(`[demo:lsp] reference composition exited (${code})`);
+        if (!stopping) demoConsole.warn("LSP composition exited", `code ${code}`);
         stop();
       });
       return child;

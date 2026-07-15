@@ -8,7 +8,7 @@ seedCustomerHoldChannel({
   world,
   customerRole: "customer",
   holdRole: "hold",
-  amount: cfg.amounts.customerHoldCapacity,
+  amount: cfg.e2eFixtures.customerHoldCapacity,
   assetScript: cfg.assetScript,
 });
 const servers = serveMockWorld(world);

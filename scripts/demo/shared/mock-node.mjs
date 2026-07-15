@@ -105,7 +105,13 @@ export function makeNode(world, role, port) {
   const rpc = (method, params) => {
     const p0 = params?.[0] ?? {};
     switch (method) {
-      case "node_info": return { node_id: pubkey, pubkey, chain_hash: "0xmock", addresses: [`/ip4/127.0.0.1/tcp/${port}`] };
+      case "node_info": return {
+        node_id: pubkey,
+        pubkey,
+        chain_hash: "0xmock",
+        addresses: [`/ip4/127.0.0.1/tcp/${port}`],
+        features: ["TRAMPOLINE_ROUTING_REQUIRED"],
+      };
       case "list_peers": return { peers: connectedNodes(world, role).map((n) => ({ pubkey: n.pubkey })) };
       case "connect_peer": {
         const peer = nodeFromAddress(world, p0.address);
@@ -276,9 +282,9 @@ export function makeNode(world, role, port) {
         if (inv.preimage) { // a regular merchant invoice: the payer learns the preimage — settled now
           moveAcrossRoute(route, inv);
           issuer.setStatus(inv.hash, "Paid");
-          payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
+          payments.set(inv.hash, { payment_hash: inv.hash, status: "Success", fee: "0x0", amount: "0x" + BigInt(inv.amount).toString(16), udt_type_script: p0.udt_type_script ?? null });
           emitPreimage(inv.hash, inv.preimage);
-          return { payment_hash: inv.hash, status: "Success" };
+          return { payment_hash: inv.hash, status: "Success", fee: "0x0" };
         }
         // a HOLD invoice: captured and HELD until the issuer settles it
         registry[inv.issuer].setStatus(inv.hash, "Received");

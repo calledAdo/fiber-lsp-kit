@@ -13,8 +13,11 @@ export function loadConfig() {
     requiredFields: ["hold.rpc", "payment.rpc", "merchant.rpc", "merchant.p2p", "customer.rpc"],
   });
   cfg.commands = {
+    dashboard: "demo:same-hash:dashboard",
     invoice: "demo:same-hash:invoice",
     pay: "demo:same-hash:pay",
+    status: "demo:same-hash:status",
   };
+  cfg.holdRole = "hold";
   return cfg;
 }

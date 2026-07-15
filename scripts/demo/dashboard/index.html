@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fiber LSP live demo</title>
+    <link rel="stylesheet" href="/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>Fiber LSP</span>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <span class="topbar-label">Live demo</span>
+      </div>
+      <div class="environment">
+        <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
+        <span id="scenario-label">Connecting</span>
+        <span class="read-only">Local controls</span>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <nav class="sidebar" aria-label="Dashboard views">
+        <p class="nav-heading">Nodes</p>
+        <button class="nav-item" type="button" data-view="overview">
+          <span>Overview</span><span class="nav-count" id="overview-count">-</span>
+        </button>
+        <button class="nav-item" type="button" data-view="customer">
+          <span>Customer</span><span class="nav-count" id="customer-count">-</span>
+        </button>
+        <button class="nav-item is-active" type="button" data-view="merchant" aria-current="page">
+          <span>Merchant</span><span class="nav-count" id="merchant-count">-</span>
+        </button>
+        <button class="nav-item" type="button" data-view="lsp">
+          <span>LSP</span><span class="nav-count" id="lsp-count">-</span>
+        </button>
+
+        <p class="nav-heading nav-heading-flow">Flow</p>
+        <button class="nav-item" type="button" data-view="checkout">
+          <span>Checkout</span><span class="nav-count" id="checkout-count">-</span>
+        </button>
+        <button class="nav-item" type="button" data-view="payments">
+          <span>Repeat payments</span><span class="nav-count" id="payments-count">-</span>
+        </button>
+        <button class="nav-item" type="button" data-view="rent">
+          <span>Rent</span><span class="nav-count" id="rent-count">-</span>
+        </button>
+
+        <div class="observer-note">
+          <span class="observer-lock" aria-hidden="true">LOCAL</span>
+          <span>Shared CLI operations; no private keys in browser</span>
+        </div>
+      </nav>
+
+      <main class="main" aria-live="polite">
+        <header class="view-header">
+          <div>
+            <p class="eyebrow" id="view-eyebrow">Network</p>
+            <h1 id="view-title">Node overview</h1>
+            <p class="view-subtitle" id="view-subtitle">Waiting for configured Fiber nodes.</p>
+          </div>
+          <span class="view-state is-loading" id="view-state">Connecting</span>
+        </header>
+
+        <div id="dashboard" class="view-content">
+          <div class="loading-state">
+            <span class="loading-line"></span>
+            <span class="loading-line loading-line-short"></span>
+          </div>
+        </div>
+
+        <footer class="refresh-bar">
+          <span id="refresh-status">Waiting for first snapshot</span>
+          <time id="refresh-time"></time>
+        </footer>
+      </main>
+    </div>
+    <template id="merchant-action-template">
+      <section class="panel action-panel">
+        <div class="panel-header">
+          <h2>Create JIT checkout</h2>
+          <span class="panel-meta">Merchant action</span>
+        </div>
+        <form class="action-form" data-action="invoice">
+          <label class="field">
+            <span>Customer payment</span>
+            <span class="amount-input"><input name="amount" inputmode="decimal" autocomplete="off" placeholder="1.00" required><b data-asset>RUSD</b></span>
+          </label>
+          <label class="field">
+            <span>Channel capacity</span>
+            <span class="amount-input"><input name="capacity" inputmode="decimal" autocomplete="off" placeholder="10.00" required><b data-asset>RUSD</b></span>
+          </label>
+          <button class="primary-action" type="submit">Create invoice</button>
+        </form>
+        <div class="action-feedback" data-action-feedback="invoice" hidden></div>
+        <div class="invoice-result" data-invoice-result data-invoice-kind="jit" hidden>
+          <div class="result-heading"><strong>Customer invoice</strong><button type="button" class="secondary-action" data-copy-invoice>Copy invoice</button></div>
+          <textarea data-created-invoice readonly aria-label="Created customer invoice"></textarea>
+          <button type="button" class="primary-action continue-action" data-go="customer" data-payment-kind="jit">Continue to customer</button>
+        </div>
+      </section>
+    </template>
+
+    <template id="regular-action-template">
+      <section class="panel action-panel action-panel-repeat">
+        <div class="panel-header">
+          <h2>Create regular invoice</h2>
+          <span class="panel-meta">Existing channel</span>
+        </div>
+        <form class="action-form action-form-single" data-action="regular-invoice">
+          <label class="field">
+            <span>Customer payment</span>
+            <span class="amount-input"><input name="regularAmount" inputmode="decimal" autocomplete="off" placeholder="0.10" required><b data-asset>RUSD</b></span>
+          </label>
+          <button class="primary-action" type="submit">Create regular invoice</button>
+        </form>
+        <div class="form-summary form-summary-panel">
+          <span>Available merchant inbound</span><strong data-merchant-inbound>-</strong>
+        </div>
+        <div class="action-feedback" data-action-feedback="regular-invoice" hidden></div>
+        <div class="invoice-result" data-invoice-result data-invoice-kind="regular" hidden>
+          <div class="result-heading"><strong>Regular customer invoice</strong><button type="button" class="secondary-action" data-copy-invoice>Copy invoice</button></div>
+          <textarea data-created-invoice readonly aria-label="Created regular invoice"></textarea>
+          <button type="button" class="primary-action continue-action" data-go="customer" data-payment-kind="regular">Continue to customer</button>
+        </div>
+      </section>
+    </template>
+
+    <template id="customer-action-template">
+      <section class="panel action-panel">
+        <div class="panel-header">
+          <h2 data-payment-title>Pay hold invoice</h2>
+          <span class="panel-meta">Customer action</span>
+        </div>
+        <form class="action-form action-form-stack" data-action="pay" data-payment-form>
+          <label class="field field-wide">
+            <span>Invoice</span>
+            <textarea name="invoice" placeholder="Paste a Fiber invoice" required></textarea>
+          </label>
+          <div class="form-summary">
+            <span data-payment-route-label>Maximum direct payment</span><strong data-customer-maximum>-</strong>
+          </div>
+          <button class="primary-action" type="submit" data-payment-submit>Pay hold invoice</button>
+        </form>
+        <div class="action-feedback" data-action-feedback="pay" hidden></div>
+      </section>
+    </template>
+
+    <template id="rent-action-template">
+      <section class="panel action-panel">
+        <div class="panel-header">
+          <h2>Pay channel rent</h2>
+          <span class="panel-meta">Merchant action</span>
+        </div>
+        <form class="action-form" data-action="rent">
+          <label class="field field-channel">
+            <span>Merchant channel</span>
+            <select name="channelId" required></select>
+          </label>
+          <label class="field field-periods">
+            <span>Periods</span>
+            <input name="periods" type="number" min="1" step="1" value="3" required>
+          </label>
+          <button class="primary-action" type="submit">Pay rent</button>
+        </form>
+        <div class="action-feedback" data-action-feedback="rent" hidden></div>
+      </section>
+    </template>
+
+    <script type="module" src="/dashboard.js"></script>
+  </body>
+</html>

@@ -1,7 +1,8 @@
 {
   "mode": "same_hash",
   "lspRest": "http://127.0.0.1:9080",
-  "control": { "merchant": 7002, "customer": 7003 },
+  "ckbRpc": "",
+  "control": { "merchant": 7002, "customer": 7003, "dashboard": 7004 },
   "asset": {
     "symbol": "RUSD",
     "decimals": 8,
@@ -11,9 +12,9 @@
       "args": "0x878fcc6f1f08d48e87bb1c3b3d5083f23f8a39c5d5c764f253b55b998526439b"
     }
   },
-  "amounts": {
-    "jitPayment": "2000000000",
-    "jitCapacity": "10000000000",
+  "e2eFixtures": {
+    "paymentAmount": "2000000000",
+    "channelCapacity": "10000000000",
     "customerHoldCapacity": "10000000000"
   },
   "jit": {

@@ -7,6 +7,7 @@ import {
   assertCustomerHoldChannel,
   assertDistinctNodes,
   assertSameChain,
+  assertTrampolineSupport,
   inspectNode,
 } from "../../../scripts/demo/shared/preflight.mjs";
 
@@ -48,7 +49,6 @@ test("preflight accepts a connected, funded customer-to-hold channel", async () 
     customerRpc: rpc,
     holdPubkey: "0xhold",
     asset,
-    amount: 600n,
   });
 
   assert.equal(result.channelId, "0xcustomer-hold");
@@ -58,23 +58,23 @@ test("preflight accepts a connected, funded customer-to-hold channel", async () 
 test("preflight rejects a missing customer-to-hold channel", async () => {
   const rpc = rpcResults([{ channels: [] }, { peers: [{ pubkey: "0xhold" }] }]);
   await assert.rejects(
-    () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset, amount: 600n }),
+    () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset }),
     /no channel to the hold node/i,
   );
 });
 
-test("preflight rejects unusable, wrong-asset, and underfunded channels", async () => {
+test("preflight rejects unusable, wrong-asset, and zero-outbound channels", async () => {
   const variants: Array<[RawChannel, RegExp]> = [
     [readyChannel({ enabled: false }), /disabled/i],
     [readyChannel({ state: { state_name: "ChannelReadying" } }), /not ready/i],
     [readyChannel({ funding_udt_type_script: null }), /wrong asset/i],
-    [readyChannel({ local_balance: "0x10" }), /insufficient outbound/i],
+    [readyChannel({ local_balance: "0x0" }), /no spendable outbound/i],
   ];
 
   for (const [channel, expected] of variants) {
     const rpc = rpcResults([{ channels: [channel] }, { peers: [{ pubkey: "0xhold" }] }]);
     await assert.rejects(
-      () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset, amount: 600n }),
+      () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset }),
       expected,
     );
   }
@@ -83,7 +83,7 @@ test("preflight rejects unusable, wrong-asset, and underfunded channels", async 
 test("preflight rejects a disconnected customer and hold node", async () => {
   const rpc = rpcResults([{ channels: [readyChannel()] }, { peers: [] }]);
   await assert.rejects(
-    () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset, amount: 600n }),
+    () => assertCustomerHoldChannel({ customerRpc: rpc, holdPubkey: "0xhold", asset }),
     /not connected/i,
   );
 });
@@ -103,5 +103,20 @@ test("same-hash preflight requires distinct hold and payment nodes", () => {
       { role: "payment", pubkey: "0xsame", chainHash: "0xchain" },
     ]),
     /hold and payment resolve to the same node/i,
+  );
+});
+
+test("trampoline preflight accepts advertised support and rejects its absence", () => {
+  assert.doesNotThrow(() => assertTrampolineSupport({
+    pubkey: "0xlsp",
+    features: ["TRAMPOLINE_ROUTING_REQUIRED"],
+  }));
+  assert.doesNotThrow(() => assertTrampolineSupport({
+    pubkey: "0xlsp",
+    features: ["TRAMPOLINE_ROUTING_OPTIONAL"],
+  }));
+  assert.throws(
+    () => assertTrampolineSupport({ pubkey: "0xlsp", features: ["BASIC_MPP_REQUIRED"] }),
+    /does not advertise trampoline routing/i,
   );
 });

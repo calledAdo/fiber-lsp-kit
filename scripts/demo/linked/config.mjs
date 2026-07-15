@@ -12,8 +12,13 @@ export function loadConfig() {
     requiredFields: ["lsp.rpc", "merchant.rpc", "merchant.p2p", "customer.rpc"],
   });
   cfg.commands = {
+    dashboard: "demo:linked:dashboard",
     invoice: "demo:linked:invoice",
     pay: "demo:linked:pay",
+    regularInvoice: "demo:linked:regular-invoice",
+    regularPay: "demo:linked:regular-pay",
+    status: "demo:linked:status",
   };
+  cfg.holdRole = "lsp";
   return cfg;
 }

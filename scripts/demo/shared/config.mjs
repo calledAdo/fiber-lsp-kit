@@ -61,6 +61,8 @@ export function loadScenarioConfig(configUrl, definition) {
   return {
     ...raw,
     asset,
+    assetConfig: { symbol: raw.asset.symbol, decimals: raw.asset.decimals },
+    assetDecimals: raw.asset.decimals,
     assetScript: raw.asset.script,
     topology,
     scenarioRoot,

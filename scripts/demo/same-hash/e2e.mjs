@@ -18,7 +18,7 @@ seedCustomerHoldChannel({
   world,
   customerRole: "customer",
   holdRole: "hold",
-  amount: cfg.amounts.customerHoldCapacity,
+  amount: cfg.e2eFixtures.customerHoldCapacity,
   assetScript: cfg.assetScript,
 });
 const rpc = Object.fromEntries(Object.entries(nodes).map(([role, node]) => [role, mockRpcClient(node)]));
@@ -43,7 +43,7 @@ const jit = new JitService({
   sleep: async () => {},
 });
 const lspClient = apiLspClient(createApi(lsp, { jit }));
-const merchantAddress = cfg.peerAddress("merchant", nodes.merchant.pubkey);
+const merchantAddress = `/ip4/127.0.0.1/tcp/${nodes.merchant.port}`;
 const checkout = new JitCheckout({
   rpc: rpc.merchant,
   lsp: lspClient,

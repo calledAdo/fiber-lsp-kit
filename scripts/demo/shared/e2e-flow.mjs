@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { LspClient, StreamingLease } from "../../../packages/client/dist/index.js";
+import { InvoiceService, LspClient, StreamingLease } from "../../../packages/client/dist/index.js";
 import { asBig, jitFee, jitForwardAmount } from "../../../packages/protocol/dist/index.js";
 
 const pass = (message) => console.log(`  ok  ${message}`);
@@ -43,22 +43,22 @@ export function apiLspClient(api) {
 export async function runJitSale({ cfg, terms, checkout, customerRpc, merchantRpc }) {
   const session = await checkout.checkout({
     asset: cfg.asset,
-    amount: cfg.amounts.jitPayment,
-    channelCapacity: cfg.amounts.jitCapacity,
+    amount: cfg.e2eFixtures.paymentAmount,
+    channelCapacity: cfg.e2eFixtures.channelCapacity,
     description: "sale #1",
   });
   assert.equal(session.mode, cfg.mode);
   pass(`checkout negotiated ${session.mode}`);
 
-  const fee = jitFee(terms, asBig(cfg.amounts.jitPayment));
-  const net = jitForwardAmount(terms, asBig(cfg.amounts.jitPayment));
+  const fee = jitFee(terms, asBig(cfg.e2eFixtures.paymentAmount));
+  const net = jitForwardAmount(terms, asBig(cfg.e2eFixtures.paymentAmount));
   assert.equal(session.fee, fee.toString(10));
   assert.equal(session.netAmount, net.toString(10));
-  assert.equal(asBig(session.netAmount) + asBig(session.fee), asBig(cfg.amounts.jitPayment));
-  pass(`${cfg.fmt(cfg.amounts.jitPayment)} = ${cfg.fmt(session.netAmount)} net + ${cfg.fmt(session.fee)} fee`);
+  assert.equal(asBig(session.netAmount) + asBig(session.fee), asBig(cfg.e2eFixtures.paymentAmount));
+  pass(`${cfg.fmt(cfg.e2eFixtures.paymentAmount)} = ${cfg.fmt(session.netAmount)} net + ${cfg.fmt(session.fee)} fee`);
 
   const parsed = await customerRpc.parseInvoice(session.invoice);
-  assert.equal(parsed.invoice.amount, asBig(cfg.amounts.jitPayment).toString(10));
+  assert.equal(parsed.invoice.amount, asBig(cfg.e2eFixtures.paymentAmount).toString(10));
   const held = await customerRpc.sendPayment({ invoice: session.invoice });
   assert.equal(held.status, "Inflight");
   pass("customer payment is held before channel provisioning");
@@ -74,7 +74,7 @@ export async function runJitSale({ cfg, terms, checkout, customerRpc, merchantRp
     channelId: order.channel_outpoint,
     terms: {
       asset: cfg.asset,
-      capacity: cfg.amounts.jitCapacity,
+      capacity: cfg.e2eFixtures.channelCapacity,
       rate_bps_per_period: 5,
       period_seconds: 86_400,
       grace_periods: 2,
@@ -94,4 +94,17 @@ export async function runRentPeriods({ cfg, lease, periods = 3 }) {
   assert.equal(lease.periodsPaid, periods);
   pass(`streamed ${periods} live-priced rent periods (${cfg.fmt(lease.totalPaid)})`);
   return payments;
+}
+
+export async function runRegularSale({ cfg, customerRpc, merchantRpc, amount = cfg.e2eFixtures.paymentAmount }) {
+  const invoices = new InvoiceService({ rpc: merchantRpc });
+  const issued = await invoices.receive({ asset: cfg.asset, amount, description: "repeat sale" });
+  const route = await customerRpc.sendPayment({ invoice: issued.invoice, dryRun: true });
+  assert.notEqual(route.status, "Failed");
+  const payment = await customerRpc.sendPayment({ invoice: issued.invoice });
+  assert.equal(payment.status, "Success");
+  const outcome = await invoices.waitForPayment(issued.paymentHash, { intervalMs: 0, sleep: async () => {} });
+  assert.equal(outcome.status, "Paid");
+  pass(`regular ${cfg.fmt(amount)} payment routed over the provisioned channel without opening another channel`);
+  return { issued, payment, outcome };
 }

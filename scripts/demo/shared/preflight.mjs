@@ -38,26 +38,32 @@ export function assertDistinctNodes(nodes) {
   }
 }
 
-function channelProblem(channel, asset, amount) {
+export function assertTrampolineSupport(info) {
+  const features = Array.isArray(info.features) ? info.features : [];
+  if (!features.some((feature) => /^TRAMPOLINE_ROUTING_(?:REQUIRED|OPTIONAL)$/.test(feature))) {
+    throw new Error(`LSP node ${info.pubkey ?? "unknown"} does not advertise trampoline routing`);
+  }
+}
+
+function channelProblem(channel, asset) {
   if (!channel.enabled) return "is disabled";
   if (!isChannelReady(channel)) return `is not ready (${channel.state?.state_name ?? "unknown state"})`;
   if (!assetEquals(channelAsset(channel), asset)) {
     return `has the wrong asset (${describeAsset(channelAsset(channel))}, expected ${describeAsset(asset)})`;
   }
   const outbound = asBig(channel.local_balance);
-  if (outbound < amount) return `has insufficient outbound capacity (${outbound} < ${amount})`;
+  if (outbound <= 0n) return "has no spendable outbound capacity";
   return undefined;
 }
 
-export async function assertCustomerHoldChannel({ customerRpc, holdPubkey, asset, amount }) {
-  const required = asBig(amount);
+export async function assertCustomerHoldChannel({ customerRpc, holdPubkey, asset }) {
   const channels = await customerRpc.listChannels(holdPubkey);
   if (channels.length === 0) throw new Error(`customer has no channel to the hold node ${holdPubkey}`);
 
-  const usable = channels.find((channel) => channelProblem(channel, asset, required) === undefined);
+  const usable = channels.find((channel) => channelProblem(channel, asset) === undefined);
   if (!usable) {
     const details = channels
-      .map((channel) => `${channel.channel_id} ${channelProblem(channel, asset, required)}`)
+      .map((channel) => `${channel.channel_id} ${channelProblem(channel, asset)}`)
       .join("; ");
     throw new Error(`customer-to-hold channel is unusable: ${details}`);
   }
@@ -82,6 +88,8 @@ export async function assertPreimageObservation(rpcUrl) {
 export function formatPreflightReport({ profile, nodes, customerChannel }) {
   const lines = [`demo profile: ${profile}`];
   for (const node of nodes) lines.push(`${node.role}: ${node.pubkey} (${node.chainHash})`);
-  lines.push(`customer -> hold: ${customerChannel.channelId}, outbound ${customerChannel.outbound}`);
+  lines.push(
+    `customer -> hold: ${customerChannel.channelId}, maximum single-channel payment ${customerChannel.outbound}`,
+  );
   return lines.join("\n");
 }

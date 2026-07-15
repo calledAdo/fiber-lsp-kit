@@ -1,5 +1,7 @@
 import { FiberChannelRpcClient } from "../../../packages/fiber/dist/index.js";
-import { assertCustomerHoldChannel, assertDistinctNodes, assertPreimageObservation, assertSameChain, formatPreflightReport, inspectNode } from "../shared/preflight.mjs";
+import { demoConsole } from "../shared/console.mjs";
+import { inspectNodeState } from "../shared/node-state.mjs";
+import { assertCustomerHoldChannel, assertDistinctNodes, assertPreimageObservation, assertSameChain, inspectNode } from "../shared/preflight.mjs";
 import { createDemoRuntime } from "../shared/processes.mjs";
 import { loadConfig } from "./config.mjs";
 
@@ -22,10 +24,24 @@ const customerChannel = await assertCustomerHoldChannel({
   customerRpc: rpcs.customer,
   holdPubkey: nodes.find((node) => node.role === "hold").pubkey,
   asset: cfg.asset,
-  amount: cfg.amounts.jitPayment,
 });
-console.log(formatPreflightReport({ profile: cfg.topology.profile, nodes, customerChannel }));
+const lspStates = await Promise.all([
+  inspectNodeState({ role: "hold", rpc: rpcs.hold, asset: cfg.asset }),
+  inspectNodeState({ role: "payment", rpc: rpcs.payment, asset: cfg.asset }),
+]);
+demoConsole.heading("Same-hash JIT", "LSP operator");
+demoConsole.ok("Node topology ready", `${cfg.topology.profile} profile · ${nodes.length} distinct nodes`);
+demoConsole.ok("Customer path ready", `${cfg.fmt(customerChannel.outbound)} maximum payment`);
+for (const state of lspStates) {
+  demoConsole.ok(
+    `${state.role === "hold" ? "Hold" : "Payment"} node liquidity`,
+    `${cfg.fmt(state.assetTotals.totalOutbound)} outbound · ${cfg.fmt(state.assetTotals.totalInbound)} inbound`,
+  );
+}
 await assertPreimageObservation(cfg.topology.nodes.payment.rpc);
+demoConsole.ok("Preimage observer ready", "payment-node FNN pubsub");
+demoConsole.info("Dashboard", `npm run ${cfg.commands.dashboard}`);
+demoConsole.info("Full diagnostics", `npm run ${cfg.commands.status}`);
 
 runtime.startReferenceComposition({
   FIBER_RPC_URL: cfg.topology.nodes.hold.rpc,
