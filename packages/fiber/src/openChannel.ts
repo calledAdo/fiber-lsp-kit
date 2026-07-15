@@ -78,7 +78,9 @@ export async function openChannelAndAwait(
 ): Promise<RawChannel | null> {
   if (args.address) {
     const peers = await rpc.listPeers();
-    if (!peers.some((p) => p.pubkey === args.pubkey)) await rpc.connectPeer(args.address);
+    if (!peers.some((p) => p.pubkey === args.pubkey)) {
+      await rpc.connectPeer(args.address, !args.reconnectOnFeatureMiss);
+    }
   }
 
   const before = new Set((await rpc.listChannels(args.pubkey)).map((c) => c.channel_id));

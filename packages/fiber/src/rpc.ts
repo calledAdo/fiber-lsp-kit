@@ -230,6 +230,8 @@ export interface SendPaymentArgs {
   dryRun?: boolean;
   /** Cap the routing fee, hex/decimal/bigint shannons. */
   maxFeeAmount?: string | bigint;
+  /** Payer-selected nodes that delegate route finding for the remaining path. Requires `maxFeeAmount`. */
+  trampolineHops?: string[];
 }
 
 /** A required waypoint for `build_router`; an outpoint pins that hop to one specific channel. */
@@ -492,6 +494,7 @@ export class FiberChannelRpcClient {
     if (args.udtTypeScript) params.udt_type_script = args.udtTypeScript;
     if (args.dryRun) params.dry_run = true;
     if (args.maxFeeAmount !== undefined) params.max_fee_amount = toHex(args.maxFeeAmount);
+    if (args.trampolineHops !== undefined) params.trampoline_hops = args.trampolineHops;
     return this.call("send_payment", [params]);
   }
 

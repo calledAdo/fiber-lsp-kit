@@ -11,12 +11,22 @@ const RUSD_SCRIPT = {
 const RUSD = udtAsset(RUSD_SCRIPT, "RUSD");
 
 /** Mock node: an existing (pre-open) channel, then the freshly-opened one appears in `state` after open. */
-function makeRpc(over: { peers?: string[]; openedState?: string; preexisting?: boolean } = {}) {
+function makeRpc(over: {
+  peers?: string[];
+  openedState?: string;
+  preexisting?: boolean;
+  featureMisses?: number;
+} = {}) {
   const calls: string[] = [];
+  const connectParams: Array<{ address?: string; save?: boolean }> = [];
   let opened = false;
+  let openAttempts = 0;
   const openedState = over.openedState ?? "ChannelReady";
   const fetchImpl: FetchLike = async (_u, init) => {
-    const { method } = JSON.parse(String(init.body)) as { method: string };
+    const { method, params } = JSON.parse(String(init.body)) as {
+      method: string;
+      params: Array<Record<string, unknown>>;
+    };
     calls.push(method);
     let result: unknown = null;
     switch (method) {
@@ -24,9 +34,20 @@ function makeRpc(over: { peers?: string[]; openedState?: string; preexisting?: b
         result = { peers: (over.peers ?? []).map((pubkey) => ({ pubkey })) };
         break;
       case "connect_peer":
+        connectParams.push(params[0] as { address?: string; save?: boolean });
         result = null;
         break;
       case "open_channel":
+        openAttempts += 1;
+        if (openAttempts <= (over.featureMisses ?? 0)) {
+          return {
+            json: async () => ({
+              jsonrpc: "2.0",
+              id: 1,
+              error: { message: "feature not found, waiting for peer to send Init message" },
+            }),
+          };
+        }
         opened = true;
         result = { temporary_channel_id: "0xtmp" };
         break;
@@ -43,7 +64,7 @@ function makeRpc(over: { peers?: string[]; openedState?: string; preexisting?: b
     }
     return { json: async () => ({ jsonrpc: "2.0", id: 1, result }) };
   };
-  return { rpc: new FiberChannelRpcClient({ rpcUrl: "http://n", fetchImpl }), calls };
+  return { rpc: new FiberChannelRpcClient({ rpcUrl: "http://n", fetchImpl }), calls, connectParams };
 }
 
 function chan(id: string, stateName: string) {
@@ -80,6 +101,20 @@ test("skips connect_peer when already peered", async () => {
   const { rpc, calls } = makeRpc({ peers: ["0xPEER"] });
   await openChannelAndAwait(rpc, { ...base, address: "/ip4/1.2.3.4/tcp/9" });
   assert.ok(!calls.includes("connect_peer"), "no redundant connect when the peer is already connected");
+});
+
+test("uses only unsaved dials while recovering from a missing peer Init", async () => {
+  const { rpc, calls, connectParams } = makeRpc({ featureMisses: 1 });
+  const ch = await openChannelAndAwait(rpc, {
+    ...base,
+    address: "/ip4/1.2.3.4/tcp/9",
+    reconnectOnFeatureMiss: true,
+  });
+
+  assert.equal(ch?.channel_id, "0xNEW");
+  assert.equal(calls.filter((method) => method === "open_channel").length, 2);
+  assert.ok(connectParams.length >= 2);
+  assert.ok(connectParams.every(({ save }) => save === false));
 });
 
 test("returns null on timeout and abandons the orphan when asked", async () => {

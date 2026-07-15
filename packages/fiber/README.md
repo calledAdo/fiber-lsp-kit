@@ -35,6 +35,24 @@ console.log(info.pubkey, channels.length, invoice.invoice_address);
 `authToken` only adds an FNN bearer header. The package does not prescribe whether an operator exposes or
 authenticates its node RPC.
 
+## Optional trampoline routing
+
+The payer may delegate the unknown remainder of a route to one or more explicitly selected trampoline nodes.
+`trampolineHops` is optional and maps directly to FNN's `trampoline_hops`; FNN also requires the payer to set a
+`maxFeeAmount` budget.
+
+```ts
+await rpc.sendPayment({
+  invoice: merchantInvoice,
+  trampolineHops: [lspPubkey],
+  maxFeeAmount: "1000000",
+});
+```
+
+The package does not select a trampoline or require an LSP to provide that service. Applications should verify
+the selected node advertises `TRAMPOLINE_ROUTING_REQUIRED` or `TRAMPOLINE_ROUTING_OPTIONAL`. They may instead use
+normal graph routing or an explicitly built route.
+
 ## Preimage observation
 
 `FnnStoreChangePreimageSource` subscribes to FNN's optional `subscribe_store_changes` WebSocket method and

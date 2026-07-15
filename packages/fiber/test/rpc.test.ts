@@ -317,6 +317,35 @@ test("sendPayment serializes keysend dry-run payments and fee caps", async () =>
   });
 });
 
+test("sendPayment serializes caller-selected trampoline hops", async () => {
+  const { rpc, calls } = scriptedRpc([
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { payment_hash: "0xpay", status: "Created", fee: "0x5" },
+    },
+  ]);
+
+  await rpc.sendPayment({
+    invoice: "fibt1merchant",
+    trampolineHops: ["0xlsp"],
+    maxFeeAmount: 5n,
+    dryRun: true,
+  });
+
+  assert.deepEqual(calls[0].body, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "send_payment",
+    params: [{
+      invoice: "fibt1merchant",
+      trampoline_hops: ["0xlsp"],
+      dry_run: true,
+      max_fee_amount: "0x5",
+    }],
+  });
+});
+
 test("peer, parse, and abandon wrappers call their FNN methods with typed parameters", async () => {
   const parsedInvoice = {
     invoice: {
