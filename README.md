@@ -29,11 +29,19 @@ The linked run needs network access once when its checksum-verified proof artifa
 - `linked` uses three roles and one LSP node. Two hashes are linked by a real Groth16 proof; missing release
   artifacts are downloaded and checksum-verified.
 - Both demonstrate hold-before-open ordering, merchant payment before hold settlement, and rent calculated from
-  the exact opened channel's live remaining inbound capacity.
+  the exact opened channel's live remaining inbound capacity. The linked run also sends a second regular invoice
+  over the provisioned channel without opening another channel.
 
 For multi-terminal or live-node runs, start with [`scripts/demo/README.md`](./scripts/demo/README.md). Live
 profiles are opt-in and require operators to prepare the nodes, funds, peer connectivity, and prerequisite
 customer channel; the scripts do not move live funds during preflight.
+
+The multi-terminal demo also includes an interactive localhost dashboard. After starting the selected scenario's
+LSP, merchant, and customer services, run `npm run demo:linked:dashboard` and open
+`http://127.0.0.1:7104` (`same-hash` uses `npm run demo:same-hash:dashboard` and port `7004`). The browser drives
+the same shared JIT, regular-payment, and rent operations as the CLI. It shows live action duration and failures,
+channel liquidity, and the paying LSP node's read-only on-chain UDT balance when `ckbRpc` is configured. The
+complete setup and click-by-click flow are in the central demo guide.
 
 ## Core mechanism
 
@@ -86,6 +94,7 @@ a separately node-signed network observation.
 |---|---|---|
 | `same_hash` JIT | `npm run demo:same-hash:e2e`; [`jitSameHash.test.ts`](./packages/lsp-server/test/jitSameHash.test.ts) | Two LSP nodes; preimage stream has no replay. |
 | `linked` JIT | `npm run demo:linked:e2e`; [`jit.test.ts`](./packages/lsp-server/test/jit.test.ts) | Current phase-2 artifacts are development-only. |
+| Post-JIT regular payment | `npm run demo:linked:e2e`; live FNN multi-terminal flow | Demo payer selects the linked LSP as an optional trampoline; other deployments may use graph or explicit routing. |
 | Channel-bound rent | Both demos; [`streamingLease.test.ts`](./packages/client/test/streamingLease.test.ts) | Client detects lapse; automatic LSP-side enforcement is not implemented. |
 
 ### Additional composable bricks

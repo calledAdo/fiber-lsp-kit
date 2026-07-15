@@ -4,6 +4,7 @@ dist/
 .DS_Store
 *.log
 .env
+.superpowers/
 
 # Local planning / agent working docs
 docs/superpowers/

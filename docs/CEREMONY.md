@@ -16,7 +16,7 @@ assumption, not the merchant's.
 > **You may not need any of this.** The proof exists only because a single FNN node cannot hold and pay the same
 > payment hash. An LSP that runs **two** nodes serves `same_hash` instead: one hash on both invoices, no proof, no
 > proving key, no setup, and no proof-setup trust. See
-> [`ARCHITECTURE.md` § The hash-lock collision](./ARCHITECTURE.md#the-hash-lock-collision). Everything below
+> [`ARCHITECTURE.md` § Why there are two JIT modes](./ARCHITECTURE.md#why-there-are-two-jit-modes). Everything below
 > applies to `linked` only.
 
 ## What is and is not already handled
@@ -118,8 +118,8 @@ npm run release    # -> verification_key.json, linkage.{zkey,ark}.gz, linkage.wa
 ```
 
 The `MANIFEST.md` records the circuit's `.r1cs` hash and the final `.zkey` hash, binding the released artifacts
-to the ceremony you just ran. See
-[`ARCHITECTURE.md` § Artifact distribution](./ARCHITECTURE.md#artifact-distribution).
+to the ceremony you just ran. See the circuit guide's
+[`Release artifacts`](../packages/protocol/circuits/dual-sha256-linkage/README.md#release-artifacts) section.
 
 ## What to publish
 
