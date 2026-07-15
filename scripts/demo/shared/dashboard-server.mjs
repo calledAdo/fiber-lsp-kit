@@ -60,13 +60,22 @@ const activityMessages = {
     running: "Pricing and paying channel rent",
     success: "Rent payment complete",
   },
+  reset: {
+    running: "Resetting the shared simulation",
+    success: "Simulation reset",
+  },
 };
 
-export function createDashboardActionController(operations, { now = Date.now } = {}) {
+export function createDashboardActionController(operations, {
+  now = Date.now,
+  reset,
+  onActivity = () => {},
+} = {}) {
   let current = { kind: undefined, status: "idle", startedAt: undefined, finishedAt: undefined, message: undefined };
 
   async function run(kind, operation, input) {
     if (current.status === "running") throw actionError(`${current.kind} action already in progress`);
+    onActivity(kind);
     current = {
       kind,
       status: "running",
@@ -100,6 +109,7 @@ export function createDashboardActionController(operations, { now = Date.now } =
     requestRegularInvoice: (input) => run("regular-invoice", operations.requestRegularInvoice, input),
     payRegularInvoice: (input) => run("regular-pay", operations.payRegularInvoice, input),
     streamRent: (input) => run("rent", operations.streamRent, input),
+    ...(reset ? { resetDemo: (input) => run("reset", reset, input) } : {}),
     activity: () => {
       const started = current.startedAt ? Date.parse(current.startedAt) : undefined;
       const finished = current.finishedAt ? Date.parse(current.finishedAt) : now();
@@ -117,9 +127,18 @@ const actionRoutes = {
   "/api/actions/regular-invoice": "requestRegularInvoice",
   "/api/actions/regular-pay": "payRegularInvoice",
   "/api/actions/rent": "streamRent",
+  "/api/actions/reset": "resetDemo",
 };
 
-export async function routeDashboardRequest({ method, path, headers = {}, body, assets, snapshot, actions }) {
+export async function routeDashboardRequest({ method, path, headers = {}, body, assets, snapshot, actions, health }) {
+  if (method === "GET" && path === "/health") {
+    try {
+      const result = health ? await health() : { ready: true };
+      return json(result.ready === false ? 503 : 200, result);
+    } catch (error) {
+      return json(503, { ready: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
   if (method === "GET" && path === "/api/snapshot") {
     try {
       return json(200, await snapshot());
@@ -137,12 +156,14 @@ export async function routeDashboardRequest({ method, path, headers = {}, body, 
     };
   }
   if (method !== "POST" || !actionRoutes[path]) return json(405, { error: "method not allowed" });
+  const action = actions?.[actionRoutes[path]];
+  if (!action) return json(404, { error: "action not available" });
   if (headers["x-demo-action"] !== "1") return json(403, { error: "missing demo action guard" });
   if (!String(headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
     return json(415, { error: "actions require application/json" });
   }
   try {
-    const result = await actions[actionRoutes[path]](body ?? {});
+    const result = await action(body ?? {});
     return json(200, { ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -173,14 +194,25 @@ export function startDashboardServer(cfg, {
   snapshot,
   operations = createDemoOperations(cfg),
   balanceProvider,
+  hosted = false,
+  reset,
+  onActivity,
+  health,
 } = {}) {
-  const actions = createDashboardActionController(operations);
+  const actions = createDashboardActionController(operations, { reset, onActivity });
   const effectiveBalanceProvider = balanceProvider ?? (
     cfg.topology.profile === "live" && cfg.ckbRpc
       ? createCkbAssetBalanceProvider({ rpcUrl: cfg.ckbRpc })
       : undefined
   );
-  const collect = snapshot ?? (() => collectDashboardSnapshot(cfg, { balanceProvider: effectiveBalanceProvider }));
+  const collectSnapshot = snapshot ?? (() => collectDashboardSnapshot(cfg, { balanceProvider: effectiveBalanceProvider }));
+  const collect = async () => ({
+    ...(await collectSnapshot()),
+    deployment: {
+      hosted,
+      transport: cfg.topology.profile === "mock" ? "simulated-fnn" : "live-fnn",
+    },
+  });
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", `http://${host}`).pathname;
     let response;
@@ -194,6 +226,7 @@ export function startDashboardServer(cfg, {
         assets,
         actions,
         snapshot: async () => ({ ...(await collect()), activity: actions.activity() }),
+        health: health ?? (async () => ({ ready: true, profile: cfg.topology.profile })),
       });
     } catch (error) {
       response = json(400, { error: error instanceof Error ? error.message : String(error) });
@@ -206,5 +239,6 @@ export function startDashboardServer(cfg, {
     demoConsole.run("Dashboard ready", `http://${host}:${port}`);
     demoConsole.info("Mode", "interactive demo adapter · refreshes every second");
   });
+  server.demoActions = actions;
   return server;
 }

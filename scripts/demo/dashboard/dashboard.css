@@ -75,6 +75,23 @@ button { font: inherit; }
   color: #b7c3cd;
 }
 
+.hosted-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 11px 0 11px 13px;
+  border-left: 3px solid var(--signal);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-650);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.hosted-notice div { display: grid; gap: 2px; }
+.hosted-notice strong { color: var(--ink-950); }
+.reset-action { flex: none; margin-right: 2px; }
+
 .workspace {
   min-height: calc(100vh - 58px);
   display: grid;
@@ -473,6 +490,7 @@ h1 { margin: 0; font-size: 25px; line-height: 1.15; font-weight: 780; }
   .action-form { grid-template-columns: 1fr; }
   .field-channel, .field-periods { min-width: 0; max-width: none; }
   .action-form .primary-action { width: 100%; }
+  .hosted-notice { align-items: flex-start; }
 }
 
 @media (max-width: 440px) {

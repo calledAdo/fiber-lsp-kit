@@ -32,6 +32,8 @@
     "demo:linked:regular-invoice": "node scripts/demo/linked/actions/request-regular-invoice.mjs",
     "demo:linked:regular-pay": "node scripts/demo/linked/actions/pay-regular-invoice.mjs",
     "demo:linked:rent": "node scripts/demo/linked/actions/stream-rent.mjs",
+    "demo:hosted": "node scripts/demo/linked/hosted.mjs",
+    "demo:hosted:artifacts": "node scripts/demo/linked/prepare-hosted-artifacts.mjs",
     "typecheck": "tsc -b packages/protocol packages/fiber packages/auth packages/registry packages/lsp-server packages/client packages/prover-linked",
     "test": "npm run build && node --import tsx --test packages/*/test/*.test.ts",
     "test:live": "npm run build && node --import tsx --test packages/*/test/integration/*.test.ts",

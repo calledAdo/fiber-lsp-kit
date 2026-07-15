@@ -36,6 +36,12 @@ For multi-terminal or live-node runs, start with [`scripts/demo/README.md`](./sc
 profiles are opt-in and require operators to prepare the nodes, funds, peer connectivity, and prerequisite
 customer channel; the scripts do not move live funds during preflight.
 
+For a public, no-funds demonstration, [`render.yaml`](./render.yaml) deploys one resettable `linked` simulation.
+It exposes the dashboard while keeping the mock FNN roles and application control services on the deployment's
+loopback interface. The simulation still runs the real client, LSP state machine, Groth16 proof, settlement
+ordering, repeat payment, and rent logic; only the FNN transport is mocked. Deployment and disclosure details are
+in the [demo guide](./scripts/demo/README.md#hosted-simulation).
+
 The multi-terminal demo also includes an interactive localhost dashboard. After starting the selected scenario's
 LSP, merchant, and customer services, run `npm run demo:linked:dashboard` and open
 `http://127.0.0.1:7104` (`same-hash` uses `npm run demo:same-hash:dashboard` and port `7004`). The browser drives

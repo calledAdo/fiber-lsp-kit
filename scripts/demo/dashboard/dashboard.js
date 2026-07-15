@@ -8,6 +8,10 @@ const ui = {
   dot: document.querySelector("#connection-dot"),
   refreshStatus: document.querySelector("#refresh-status"),
   refreshTime: document.querySelector("#refresh-time"),
+  hostedNotice: document.querySelector("[data-hosted-notice]"),
+  controlScope: document.querySelector("#control-scope"),
+  observerScope: document.querySelector("#observer-scope"),
+  observerCopy: document.querySelector("#observer-copy"),
   templates: {
     merchant: document.querySelector("#merchant-action-template"),
     regular: document.querySelector("#regular-action-template"),
@@ -24,6 +28,7 @@ let renderedSignature;
 let localActivity;
 let createdInvoice;
 let createdInvoiceKind;
+let observedResetAt;
 const drafts = {
   amount: "",
   capacity: "",
@@ -50,7 +55,34 @@ const actionEndpoints = {
   "regular-invoice": "/api/actions/regular-invoice",
   "regular-pay": "/api/actions/regular-pay",
   rent: "/api/actions/rent",
+  reset: "/api/actions/reset",
 };
+
+const actionMessages = {
+  invoice: { running: "Building proof and creating the hold invoice", success: "Hold invoice ready" },
+  pay: { running: "Payment submitted; waiting for atomic settlement", success: "Atomic checkout settled" },
+  "regular-invoice": { running: "Checking merchant inbound and creating a regular invoice", success: "Regular invoice ready" },
+  "regular-pay": { running: "Checking the route and waiting for merchant confirmation", success: "Regular payment settled" },
+  rent: { running: "Pricing remaining inbound and paying rent", success: "Rent payment complete" },
+  reset: { running: "Resetting the shared simulation", success: "Simulation reset" },
+};
+
+function clearDemoDrafts() {
+  initialMerchantChannels = undefined;
+  renderedSignature = undefined;
+  localActivity = undefined;
+  createdInvoice = undefined;
+  createdInvoiceKind = undefined;
+  Object.assign(drafts, {
+    amount: "",
+    capacity: "",
+    regularAmount: "",
+    invoice: undefined,
+    paymentKind: "jit",
+    channelId: "",
+    periods: "3",
+  });
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -496,10 +528,24 @@ async function refresh({ force = false } = {}) {
     if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     const signature = snapshotSignature(body);
     snapshot = body;
+    const resetAt = snapshot.activity?.kind === "reset" && snapshot.activity.status === "success"
+      ? snapshot.activity.finishedAt
+      : undefined;
+    if (resetAt && resetAt !== observedResetAt) {
+      observedResetAt = resetAt;
+      clearDemoDrafts();
+    }
     if (initialMerchantChannels === undefined) {
       initialMerchantChannels = snapshot.nodes.merchant?.assetTotals.readyChannels ?? 0;
     }
     ui.scenario.textContent = `${titleCase(snapshot.scenario.mode)} · ${snapshot.scenario.profile} · ${snapshot.scenario.asset.symbol}`;
+    const hosted = snapshot.deployment?.hosted === true;
+    ui.hostedNotice.hidden = !hosted;
+    ui.controlScope.textContent = hosted ? "Shared simulation" : "Local controls";
+    ui.observerScope.textContent = hosted ? "MOCK" : "LOCAL";
+    ui.observerCopy.textContent = hosted
+      ? "Simulated FNN transport; no keys or funds"
+      : "Shared CLI operations; no private keys in browser";
     ui.dot.className = "status-dot is-live";
     ui.refreshStatus.textContent = "Node snapshot current";
     ui.refreshTime.textContent = new Date(snapshot.generatedAt).toLocaleTimeString();
@@ -540,15 +586,7 @@ async function postAction(kind, body) {
     status: "running",
     startedAt,
     finishedAt: undefined,
-    message: kind === "invoice"
-      ? "Building proof and creating the hold invoice"
-      : kind === "pay"
-        ? "Payment submitted; waiting for atomic settlement"
-        : kind === "regular-invoice"
-          ? "Checking merchant inbound and creating a regular invoice"
-          : kind === "regular-pay"
-            ? "Checking the route and waiting for merchant confirmation"
-            : "Pricing remaining inbound and paying rent",
+    message: actionMessages[kind]?.running ?? "Running action",
   };
   render();
   try {
@@ -570,15 +608,7 @@ async function postAction(kind, body) {
       status: "success",
       startedAt,
       finishedAt: new Date().toISOString(),
-      message: kind === "invoice"
-        ? "Hold invoice ready"
-        : kind === "pay"
-          ? "Atomic checkout settled"
-          : kind === "regular-invoice"
-            ? "Regular invoice ready"
-            : kind === "regular-pay"
-              ? "Regular payment settled"
-              : "Rent payment complete",
+      message: actionMessages[kind]?.success ?? "Action complete",
     };
     await refresh({ force: true });
     return payload.result;
@@ -630,6 +660,18 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  const reset = event.target.closest('[data-action="reset"]');
+  if (reset) {
+    reset.disabled = true;
+    reset.textContent = "Resetting...";
+    const result = await postAction("reset", {});
+    if (result) {
+      clearDemoDrafts();
+      selectView("merchant");
+    }
+    reset.disabled = false;
+    reset.textContent = result ? "Reset complete" : "Reset demo";
+  }
   const go = event.target.closest("[data-go]");
   if (go) {
     const result = go.closest("[data-invoice-result]");

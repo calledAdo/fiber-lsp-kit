@@ -105,6 +105,10 @@ test("the central demo guide is the only README and documents every command cont
   assert.match(guide, /trampoline_hops/);
   assert.match(guide, /shape alone does not give the customer full graph knowledge/i);
   assert.doesNotMatch(guide, /linked topology guarantees the required shape/i);
+  assert.match(guide, /npm run demo:hosted/);
+  assert.match(guide, /hosted simulation/i);
+  assert.match(guide, /mock FNN transport/i);
+  assert.match(guide, /0\.0\.0\.0[^\n]*PORT/i);
 });
 
 test("scenario entrypoints contain no interactive or environment mode selection", () => {

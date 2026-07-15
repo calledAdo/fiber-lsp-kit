@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Fiber LSP live demo</title>
+    <title>Fiber LSP demo</title>
     <link rel="stylesheet" href="/dashboard.css">
   </head>
   <body>
@@ -12,12 +12,12 @@
         <span class="brand-mark" aria-hidden="true">F</span>
         <span>Fiber LSP</span>
         <span class="topbar-divider" aria-hidden="true"></span>
-        <span class="topbar-label">Live demo</span>
+        <span class="topbar-label">Operator demo</span>
       </div>
       <div class="environment">
         <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
         <span id="scenario-label">Connecting</span>
-        <span class="read-only">Local controls</span>
+        <span class="read-only" id="control-scope">Local controls</span>
       </div>
     </header>
 
@@ -49,12 +49,19 @@
         </button>
 
         <div class="observer-note">
-          <span class="observer-lock" aria-hidden="true">LOCAL</span>
-          <span>Shared CLI operations; no private keys in browser</span>
+          <span class="observer-lock" id="observer-scope" aria-hidden="true">LOCAL</span>
+          <span id="observer-copy">Shared CLI operations; no private keys in browser</span>
         </div>
       </nav>
 
       <main class="main" aria-live="polite">
+        <aside class="hosted-notice" data-hosted-notice hidden>
+          <div>
+            <strong>Hosted simulation</strong>
+            <span>Mock FNN transport; real client, LSP state machine, Groth16 proof, settlement, and rent logic.</span>
+          </div>
+          <button class="secondary-action reset-action" type="button" data-action="reset">Reset demo</button>
+        </aside>
         <header class="view-header">
           <div>
             <p class="eyebrow" id="view-eyebrow">Network</p>

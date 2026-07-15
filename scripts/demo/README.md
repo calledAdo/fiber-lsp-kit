@@ -77,6 +77,42 @@ and payment roles are distinct and have no channel between them. After linked JI
 regular merchant invoice and routes a second payment over the existing channels without another proof or channel
 open. The supplied split-node topology does not guarantee that repeat route, so the same-hash E2E does not claim it.
 
+## Hosted simulation
+
+The hosted composition is a public, resettable version of the `linked` dashboard. It uses mock FNN transport but
+the real `FiberChannelRpcClient`, merchant SDK, LSP service, Groth16 prover/verifier, settlement state machine,
+repeat-payment helper, and channel-bound rent implementation. It never connects to testnet, reads a CKB RPC, or
+uses node private keys.
+
+To run the hosted shape locally:
+
+```bash
+npm run build
+npm run demo:hosted:artifacts
+PORT=7104 npm run demo:hosted
+```
+
+Open `http://127.0.0.1:7104`. The public dashboard binds to `0.0.0.0` at `PORT`; all mock FNN, LSP REST, merchant,
+and customer control services remain on `127.0.0.1` inside the same process environment. `GET /health` returns
+ready only while those internal services are available.
+
+The service is intentionally shared and permits one mutation at a time. **Reset demo** stops the internal services,
+clears ignored demo state, and starts a fresh three-node world. The same reset runs automatically after ten minutes
+without a dashboard action. A reset cannot overlap invoice creation, payment, or rent. Public rent requests are
+capped at ten periods per action; the underlying local helper retains its normal caller-selected period count.
+
+[`render.yaml`](../../render.yaml) defines one Render web service:
+
+- build: `npm ci`, compile the workspaces, then download and checksum-verify the linked artifacts;
+- start: supervise the mock FNN world, LSP, merchant, customer, and public dashboard;
+- health check: `/health`;
+- configuration: none required. `DEMO_RESET_MS` may override the ten-minute reset interval and must be at least
+  10,000 milliseconds.
+
+The hosted launcher refuses to start unless `linked/demo.config.json` has blank `ckbRpc` and node endpoint fields.
+This is a simulation surface, not a public proxy for live FNN RPC. Live-node behavior is demonstrated separately by
+running the multi-terminal profile below.
+
 ## Mock or live nodes
 
 Node selection is atomic for each scenario:
@@ -247,8 +283,8 @@ but it never receives node private keys or an LSP order capability.
 
 Dashboard action requests require JSON and the `x-demo-action: 1` header, which prevents an ordinary cross-site HTML
 form from dispatching a payment. The action controller also permits only one invoice, payment, or rent operation at
-a time, preventing duplicate dispatch from a double-click. The dashboard binds to `127.0.0.1`; do not expose this
-demo control surface publicly.
+a time, preventing duplicate dispatch from a double-click. The scenario-specific dashboard commands bind to
+`127.0.0.1` and should not be proxied publicly. Use the mock-only `npm run demo:hosted` composition for public access.
 
 The views are:
 

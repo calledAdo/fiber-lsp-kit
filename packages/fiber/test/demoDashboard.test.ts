@@ -182,7 +182,21 @@ test("dashboard router serves snapshots and only guarded named actions", async (
       calls.push({ action: "rent", body });
       return { periodsPaid: 2 };
     },
+    resetDemo: async (body: unknown) => {
+      calls.push({ action: "reset", body });
+      return { reset: true };
+    },
   };
+
+  const health = await routeDashboardRequest({
+    method: "GET",
+    path: "/health",
+    assets,
+    snapshot: async () => snapshot,
+    health: async () => ({ ready: true, profile: "mock" }),
+  });
+  assert.equal(health.status, 200);
+  assert.deepEqual(JSON.parse(health.body), { ready: true, profile: "mock" });
 
   const api = await routeDashboardRequest({ method: "GET", path: "/api/snapshot", assets, snapshot: async () => snapshot });
   assert.equal(api.status, 200);
@@ -217,6 +231,19 @@ test("dashboard router serves snapshots and only guarded named actions", async (
   });
   assert.equal(regular.status, 200);
   assert.equal(JSON.parse(regular.body).result.invoice, "fibt1regular");
+
+  const reset = await routeDashboardRequest({
+    method: "POST",
+    path: "/api/actions/reset",
+    headers: { "content-type": "application/json", "x-demo-action": "1" },
+    body: {},
+    assets,
+    snapshot: async () => snapshot,
+    actions,
+  });
+  assert.equal(reset.status, 200);
+  assert.deepEqual(JSON.parse(reset.body).result, { reset: true });
+  assert.deepEqual(calls.at(-1), { action: "reset", body: {} });
 
   const unguarded = await routeDashboardRequest({
     method: "POST",
@@ -265,7 +292,10 @@ test("dashboard action controller rejects a second action while one is in flight
     requestRegularInvoice: async () => ({ invoice: "fibt1regular" }),
     payRegularInvoice: async () => ({ status: "Success", invoiceStatus: "Paid" }),
     streamRent: async () => ({ periodsPaid: 1 }),
-  }, { now: () => clock });
+  }, {
+    now: () => clock,
+    reset: async () => ({ reset: true }),
+  });
 
   const payment = controller.payInvoice({ invoice: "fibt1" });
   assert.equal(controller.activity().status, "running");
@@ -273,12 +303,35 @@ test("dashboard action controller rejects a second action while one is in flight
   clock += 1_500;
   assert.equal(controller.activity().elapsedMs, 1_500);
   await assert.rejects(() => controller.requestInvoice({ amount: "1", capacity: "10" }), /already in progress/i);
+  await assert.rejects(() => controller.resetDemo({}), /already in progress/i);
 
   finish({ status: "Success" });
   clock += 500;
   await payment;
   assert.equal(controller.activity().status, "success");
   assert.equal(controller.activity().elapsedMs, 2_000);
+});
+
+test("dashboard action controller serializes reset and reports its activity", async () => {
+  const events: string[] = [];
+  const controller = createDashboardActionController({
+    requestInvoice: async () => ({ invoice: "fibt1" }),
+    payInvoice: async () => ({ status: "Success" }),
+    requestRegularInvoice: async () => ({ invoice: "fibt1regular" }),
+    payRegularInvoice: async () => ({ status: "Success", invoiceStatus: "Paid" }),
+    streamRent: async () => ({ periodsPaid: 1 }),
+  }, {
+    reset: async () => {
+      events.push("reset");
+      return { reset: true };
+    },
+    onActivity: (kind: string) => events.push(kind),
+  });
+
+  assert.deepEqual(await controller.resetDemo({}), { reset: true });
+  assert.deepEqual(events, ["reset", "reset"]);
+  assert.equal(controller.activity().kind, "reset");
+  assert.equal(controller.activity().status, "success");
 });
 
 test("demo milestone updates preserve state written by another process", () => {
@@ -314,4 +367,10 @@ test("dashboard HTML declares all approved navigation views and repeat-payment a
   assert.match(js, /updateActionTimers/);
   assert.match(js, /Failed/);
   assert.match(js, /onchainAsset/);
+  assert.match(html, /data-hosted-notice/);
+  assert.match(html, /data-action=["']reset["']/);
+  assert.match(js, /\/api\/actions\/reset/);
+  assert.match(js, /deployment\?\.hosted/);
+  assert.match(js, /activity\?\.kind\s*===\s*["']reset["']/);
+  assert.match(js, /clearDemoDrafts/);
 });
